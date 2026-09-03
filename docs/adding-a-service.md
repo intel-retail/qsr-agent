@@ -1,5 +1,9 @@
 # Adding a QSR Service
 
+[Repository overview](../README.md) | [Documentation guide](index.md) |
+[Setup](setup.md) | [Architecture](architecture.md) |
+**Add a service**
+
 An MCP service is the authority for one restaurant domain. It owns current and
 historical data, typed reads/actions, validation, policy gates, and audit logs.
 Hermes is already the MCP client; do not duplicate domain data in a skill or
@@ -173,3 +177,8 @@ Confirm the service received `tools/call` and the final answer matches its
 result. Test denied and approved actions separately. For cross-domain tests,
 make one service unavailable and verify Hermes reports partial coverage instead
 of inventing the missing portion.
+
+---
+
+[Previous: Architecture](architecture.md) |
+[Documentation guide](index.md)

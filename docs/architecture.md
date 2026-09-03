@@ -1,5 +1,9 @@
 # QSR Agent Architecture
 
+[Repository overview](../README.md) | [Documentation guide](index.md) |
+[Setup](setup.md) | **Architecture** |
+[Add a service](adding-a-service.md)
+
 The deployable unit is one edge-hosted agent plus independently owned domain
 services. The agent runtime may later change from Hermes to another MCP-capable
 framework without moving source data or business policy into the agent.
@@ -20,7 +24,7 @@ framework without moving source data or business policy into the agent.
 User
   -> Agent loads relevant domain skill
   -> Qwen selects a direct MCP tool
-  -> Agent sends tools/call over Streamable HTTP
+  -> Agent sends tools/call over local stdio or Streamable HTTP
   -> Domain service reads or acts through its policy gate
   -> Agent returns structured result to Qwen
   -> Qwen answers using only returned evidence
@@ -120,3 +124,8 @@ client, Hermes registration, skill, optional `AGENTS.md`, and test procedure.
 6. Test a denied action and an approved action separately.
 7. Test a cross-domain question with one service intentionally unavailable;
    Hermes must report partial coverage instead of fabricating the missing data.
+
+---
+
+[Previous: Complete setup](setup.md) |
+[Next: Adding a service](adding-a-service.md)

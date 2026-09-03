@@ -1,5 +1,9 @@
 # Complete Local Setup
 
+[Repository overview](../README.md) | [Documentation guide](index.md) |
+**Setup** | [Architecture](architecture.md) |
+[Add a service](adding-a-service.md)
+
 This procedure reproduces the validated stack on a Linux x86-64 machine with
 an Intel GPU. Hermes and the QSR simulations run on the host; OVMS runs in
 Docker. The simulation Dockerfile is optional and runs MCP services only, not
@@ -55,9 +59,8 @@ pull` cannot reach Docker Hub. Do not disable TLS verification.
 ## 2. Run setup
 
 ```bash
-git clone <repository-url> qsr-agentic-svc
+git clone https://github.com/unarayan/qsr-agentic-svc.git
 cd qsr-agentic-svc
-chmod +x scripts/setup.sh
 ./scripts/setup.sh
 ```
 
@@ -219,3 +222,8 @@ mTLS validation and restrict ingress to the agent host. Merge the shape in
 | MCP is listed but answers are unsupported | Run `hermes mcp test`, then confirm the service observed `tools/call`. |
 | `GET /mcp` returns 400 or 406 | The route exists; Streamable HTTP requires an initialized MCP session. |
 | Python has no venv support | Setup automatically uses isolated `pip --target`; install `python3-venv` if the fallback is unavailable. |
+
+---
+
+[Previous: Documentation guide](index.md) |
+[Next: Architecture](architecture.md)
