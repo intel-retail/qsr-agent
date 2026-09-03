@@ -1,0 +1,18 @@
+# Test-only Hermes registrations for the simulated MCP services. Merge this
+# block into ~/.hermes/config.yaml and replace the repository path.
+platform_toolsets:
+  cli:
+    - kiosk
+    - order-accuracy
+
+mcp_servers:
+  kiosk:
+    command: python3
+    args:
+      - /absolute/path/to/qsr-agentic-svc/tests/mcp-services/kiosk_server.py
+    enabled: true
+  order-accuracy:
+    command: python3
+    args:
+      - /absolute/path/to/qsr-agentic-svc/tests/mcp-services/order_accuracy_server.py
+    enabled: true

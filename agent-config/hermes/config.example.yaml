@@ -1,0 +1,32 @@
+# Reusable Hermes runtime settings for this project. Copy required values into
+# ~/.hermes/config.yaml and replace the repository path. MCP endpoints are kept
+# separately because local simulations and production services use different
+# transports and trust boundaries.
+model:
+  default: OpenVINO/Qwen3-8B-int4-ov
+  provider: local-ovms
+  base_url: http://127.0.0.1:8000/v3
+  context_length: 65536
+  max_tokens: 9000
+
+providers:
+  local-ovms:
+    name: Local OVMS
+    base_url: http://127.0.0.1:8000/v3
+    default_model: OpenVINO/Qwen3-8B-int4-ov
+    request_timeout_seconds: 1800
+    stale_timeout_seconds: 1800
+
+agent:
+  max_turns: 500
+  run_budget_seconds: 1800
+  tool_use_enforcement: "true"
+  session_stall_timeout: 900
+
+tools:
+  tool_search:
+    enabled: false
+
+skills:
+  external_dirs:
+    - /absolute/path/to/qsr-agentic-svc/qsr-skills

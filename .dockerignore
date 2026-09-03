@@ -1,0 +1,13 @@
+.git/
+.venv/
+.vscode/
+.idea/
+**/__pycache__/
+**/.pytest_cache/
+**/*.py[cod]
+**/*.egg-info/
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+**/*.log
+tests/mcp-services/logs/

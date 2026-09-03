@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Runtime state
+*.db
+*.sqlite
+*.sqlite3
+*.log
+tests/mcp-services/logs/*.jsonl
+
+# Local agent configuration and secrets
+.env
+.env.*
+!.env.example
+agent-config/**/config.local.*
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store

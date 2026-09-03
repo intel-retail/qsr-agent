@@ -1,0 +1,19 @@
+# Merge this block into ~/.hermes/config.yaml and replace each hostname.
+# Put TLS/authentication at a reverse proxy on each service machine.
+mcp_servers:
+  kiosk:
+    url: https://kiosk-service.example.internal/mcp
+    transport: streamable-http
+    enabled: true
+    connect_timeout: 15
+    timeout: 120
+    headers:
+      Authorization: Bearer ${KIOSK_MCP_TOKEN}
+  order-accuracy:
+    url: https://order-accuracy.example.internal/mcp
+    transport: streamable-http
+    enabled: true
+    connect_timeout: 15
+    timeout: 120
+    headers:
+      Authorization: Bearer ${ORDER_ACCURACY_MCP_TOKEN}
