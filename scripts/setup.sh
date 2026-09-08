@@ -28,7 +28,10 @@ MCP_VENV_PY="$MCP_VENV/bin/python"
 # Operator UI: started automatically at the end of setup. Set START_UI=false to
 # skip, or override host/port.
 START_UI=${START_UI:-true}
-QSR_UI_HOST=${QSR_UI_HOST:-127.0.0.1}
+# Bind on all interfaces by default so the UI is reachable from a browser on
+# another machine without SSH port forwarding. Set QSR_UI_HOST=127.0.0.1 to
+# restrict to loopback.
+QSR_UI_HOST=${QSR_UI_HOST:-0.0.0.0}
 QSR_UI_PORT=${QSR_UI_PORT:-8600}
 # Registrations are convention-based, not per-service code: each QSR sim is a
 # tests/mcp-services/<name>_server.py (auto-discovered), and real apps register
@@ -78,7 +81,7 @@ Optional environment variables:
     SDK_GIT_REF         Git ref for mcp-service-sdk fallback install
     MCP_VENV            Venv that launches the sim MCP servers
     START_UI            Auto-start the operator UI after setup (default true)
-    QSR_UI_HOST         Operator UI bind host (default 127.0.0.1)
+    QSR_UI_HOST         Operator UI bind host (default 0.0.0.0)
     QSR_UI_PORT         Operator UI bind port (default 8600)
 EOF
 }
@@ -415,6 +418,23 @@ PY
     hermes config check </dev/null
 }
 
+wait_for_operator_ui() {
+    local url="$1"
+    local pid_file="$2"
+    local attempt pid
+    for attempt in {1..20}; do
+        if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
+            return 0
+        fi
+        pid=$(cat "$pid_file" 2>/dev/null || true)
+        if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
+            return 1
+        fi
+        sleep 1
+    done
+    return 1
+}
+
 start_operator_ui() {
     if [[ "${START_UI,,}" != "true" ]]; then
         log "START_UI=false; not starting the operator UI."
@@ -424,15 +444,41 @@ start_operator_ui() {
     [[ -f "$ui" ]] || { log "Operator UI not found at $ui; skipping."; return 0; }
     local pid_file="/tmp/qsr-operator-ui.pid"
     local log_file="/tmp/qsr-operator-ui.log"
-    if [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file" 2>/dev/null)" 2>/dev/null; then
-        log "Operator UI already running (pid $(cat "$pid_file"), http://$QSR_UI_HOST:$QSR_UI_PORT)"
-        return 0
+    # Probe over loopback even when binding on 0.0.0.0.
+    local probe_host="$QSR_UI_HOST"
+    [[ "$probe_host" == "0.0.0.0" ]] && probe_host="127.0.0.1"
+    local url="http://$probe_host:$QSR_UI_PORT/health"
+    local pid current_args
+    pid=$(cat "$pid_file" 2>/dev/null || true)
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+        if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
+            log "Operator UI already running (pid $pid, http://$QSR_UI_HOST:$QSR_UI_PORT)"
+            return 0
+        fi
+        current_args=$(ps -p "$pid" -o args= 2>/dev/null || true)
+        if [[ "$current_args" == *"$ui"* ]]; then
+            log "Replacing unhealthy operator UI process (pid $pid)"
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+        else
+            fail "Refusing to reuse $pid_file because pid $pid is a different live process: $current_args"
+        fi
+    elif [[ -f "$pid_file" ]]; then
+        rm -f "$pid_file"
     fi
     log "Starting operator UI on http://$QSR_UI_HOST:$QSR_UI_PORT"
     QSR_UI_HOST="$QSR_UI_HOST" QSR_UI_PORT="$QSR_UI_PORT" \
-        nohup python3 "$ui" > "$log_file" 2>&1 &
+        nohup python3 -u "$ui" > "$log_file" 2>&1 &
     echo $! > "$pid_file"
-    log "Operator UI started (pid $(cat "$pid_file"), log: $log_file)"
+    if ! wait_for_operator_ui "$url" "$pid_file"; then
+        pid=$(cat "$pid_file" 2>/dev/null || true)
+        if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
+            rm -f "$pid_file"
+        fi
+        tail -n 20 "$log_file" >&2 || true
+        fail "Operator UI did not become ready on $url"
+    fi
+    log "Operator UI started (pid $(cat "$pid_file"), http://$QSR_UI_HOST:$QSR_UI_PORT, log: $log_file)"
 }
 
 validate_stack() {

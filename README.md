@@ -37,16 +37,21 @@ A lightweight web UI lets an operator chat with the agent and see which services
 are connected, without using the CLI. It has no extra dependencies (Python
 standard library only) and drives the same Hermes agent under the hood.
 
-`./scripts/setup.sh` starts it automatically at the end and prints the URL
-(`http://127.0.0.1:8600`). Set `START_UI=false` to skip that.
+`./scripts/setup.sh` starts it automatically at the end and prints the URL.
+By default it binds on all interfaces so you can open it from another machine
+on the LAN at `http://<host>:8600`. On the same host, use
+`http://127.0.0.1:8600`. Set `START_UI=false` to skip the auto-start, or set
+`QSR_UI_HOST=127.0.0.1` to restrict it to loopback.
 
 To start it manually (or restart it later):
 
 ```bash
-python3 operator-ui/app.py            # serves on http://127.0.0.1:8600
+python3 operator-ui/app.py            # serves on http://<host>:8600
 ```
 
-Then open `http://127.0.0.1:8600`. On a remote host, forward the port first:
+If you kept the default LAN binding, open `http://<host>:8600` from your
+browser. If you set `QSR_UI_HOST=127.0.0.1`, forward the port first when the
+agent is on a remote box:
 
 ```bash
 ssh -L 8600:127.0.0.1:8600 <user>@<host>
@@ -57,7 +62,7 @@ right panel is the chat. Ask questions like "List all suspicious-activity zones"
 or "What is our order accuracy rate?" and the agent answers from the live MCP
 services.
 
-Options: `START_UI` (default `true`), `QSR_UI_HOST` (default `127.0.0.1`),
+Options: `START_UI` (default `true`), `QSR_UI_HOST` (default `0.0.0.0`),
 `QSR_UI_PORT` (default `8600`). When started by setup, logs go to
 `/tmp/qsr-operator-ui.log`.
 

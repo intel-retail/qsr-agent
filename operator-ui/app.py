@@ -8,7 +8,7 @@ framework and no pip installs, so it runs anywhere the agent runs.
 Run:
     python3 operator-ui/app.py            # then open http://127.0.0.1:8600
 Environment:
-    QSR_UI_HOST   bind host   (default 127.0.0.1)
+    QSR_UI_HOST   bind host   (default 0.0.0.0)
     QSR_UI_PORT   bind port   (default 8600)
     HERMES_BIN    hermes path (default ~/.local/bin/hermes)
     HERMES_TIMEOUT  per-question seconds (default 300)
@@ -24,7 +24,7 @@ import subprocess
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-HOST = os.environ.get("QSR_UI_HOST", "127.0.0.1")
+HOST = os.environ.get("QSR_UI_HOST", "0.0.0.0")
 PORT = int(os.environ.get("QSR_UI_PORT", "8600"))
 HERMES_BIN = os.environ.get("HERMES_BIN", os.path.expanduser("~/.local/bin/hermes"))
 HERMES_TIMEOUT = float(os.environ.get("HERMES_TIMEOUT", "300"))
