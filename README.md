@@ -44,7 +44,7 @@ Validate an existing installation without changing it:
 
 | Path | Purpose |
 |---|---|
-| `mcp-service-base/` | Framework-neutral service contract, logging, policy, delivery, and MCP binding |
+| `mcp-service-sdk` Git dependency | Framework-neutral service contract, logging, policy, delivery, and MCP binding |
 | `tests/mcp-services/` | Runnable Kiosk and Order Accuracy simulations |
 | `qsr-skills/` | Hermes domain routing and interpretation procedures |
 | `agent-config/hermes/` | Local and remote Hermes configuration fragments |

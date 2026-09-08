@@ -37,7 +37,7 @@ gives Qwen the real MCP schemas directly and removes the deferred
 ## Repository Layout
 
 ```text
-mcp-service-base/                 Shared service contract and policy library
+mcp-service-sdk (Git package)     Shared service contract and policy library
 tests/mcp-services/
   service_runtime.py              Transport selection only
   service_launcher.py             Chooses one domain service per process

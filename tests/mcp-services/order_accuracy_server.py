@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Simulated Order Accuracy service built on the mcp-service-base contract.
+"""Simulated Order Accuracy service built on the mcp-service-sdk contract.
 
 Declares the `get_order_accuracy_context` read tool plus gated act tools
 (`request_remake`, `issue_comp`) on a ServiceServer, then serves them over the
@@ -12,10 +12,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-# Import the runtime first: it puts mcp-service-base's src on sys.path.
+# Import the runtime first so the shared test transport is available.
 from service_runtime import run_service
 
-from mcp_service_base import GateLevel, ServiceConfig, ServiceServer
+from mcp_service_sdk import GateLevel, ServiceConfig, ServiceServer
 
 STORE_ID = "qsr-001"
 

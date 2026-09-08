@@ -10,11 +10,37 @@ OVMS_CONTAINER=${OVMS_CONTAINER:-ovms-qwen3-8b}
 OVMS_PORT=${OVMS_PORT:-8000}
 HERMES_CONFIG=${HERMES_CONFIG:-"$HOME/.hermes/config.yaml"}
 HERMES_INSTALL_URL=${HERMES_INSTALL_URL:-https://hermes-agent.nousresearch.com/install.sh}
+SDK_LOCAL_PATH=${SDK_LOCAL_PATH:-"$ROOT_DIR/../../oep/edge-ai-libraries/libraries/mcp-service-sdk"}
+SDK_GIT_REF=${SDK_GIT_REF:-mcp}
+# Optional: pin Hermes to a validated commit (full 40-char SHA). The installer
+# tracks `main` by default, and newer builds have changed behavior (e.g. a
+# >=64K context-window requirement). Set this to the SHA the stack was
+# validated against to make installs reproducible for the customer handover.
+HERMES_INSTALL_COMMIT=${HERMES_INSTALL_COMMIT:-}
 SETUP_VENV=${SETUP_VENV:-"$ROOT_DIR/.venv/qsr-setup"}
 SETUP_TARGET=${SETUP_TARGET:-"$ROOT_DIR/.venv/qsr-setup-target"}
+SDK_PACKAGE_SPEC=${SDK_PACKAGE_SPEC:-mcp-service-sdk[mcp] @ git+https://github.com/sachinkaushik/edge-ai-libraries.git@$SDK_GIT_REF#subdirectory=libraries/mcp-service-sdk}
 SETUP_PYTHON=python3
 SETUP_PYTHONPATH=
 CHECK_ONLY=false
+
+# Run completely unattended: never block on an interactive prompt. Standard
+# "assume defaults" signals for the tools this script drives; unknown ones are
+# harmless. Commands that might still try to read a TTY are invoked with stdin
+# closed (< /dev/null) at their call sites.
+export DEBIAN_FRONTEND=noninteractive
+export CI=1
+export HERMES_NONINTERACTIVE=1
+export HERMES_NO_ANALYTICS=1
+export PIP_DISABLE_PIP_VERSION_CHECK=1
+export PIP_NO_INPUT=1
+export HF_HUB_DISABLE_TELEMETRY=1
+
+# The model and MCP services are all on loopback. If a proxy is configured,
+# localhost must bypass it or the OVMS call fails with "403 incorrect proxy
+# service". Ensure loopback is always in no_proxy for setup-time calls.
+export NO_PROXY="localhost,127.0.0.1,::1${NO_PROXY:+,$NO_PROXY}"
+export no_proxy="$NO_PROXY"
 
 usage() {
     cat <<'EOF'
@@ -32,8 +58,11 @@ Optional environment variables:
   OVMS_PORT           Loopback port for OVMS (default: 8000)
   HERMES_CONFIG       Hermes YAML path
   HERMES_INSTALL_URL  Hermes installer URL
+        SDK_LOCAL_PATH      Local checkout path for mcp-service-sdk
+        SDK_GIT_REF         Git ref for mcp-service-sdk fallback install
   SETUP_VENV          Helper virtual environment path
     SETUP_TARGET        Fallback isolated dependency path
+        SDK_PACKAGE_SPEC    Override package spec for mcp-service-sdk
 EOF
 }
 
@@ -98,6 +127,30 @@ check_prerequisites() {
     render_node >/dev/null
 }
 
+# Pre-install the packages the Hermes installer would otherwise apt-install via
+# an interactive `sudo` mid-run. Installing them here (only when passwordless
+# sudo is available) removes the sudo password pause during install, so the
+# script never stalls before configure_hermes writes the provider config.
+ensure_build_packages() {
+    command -v apt-get >/dev/null 2>&1 || return 0
+    local pkgs=(build-essential python3-dev libffi-dev ripgrep ffmpeg)
+    local missing=()
+    local p
+    for p in "${pkgs[@]}"; do
+        dpkg -s "$p" >/dev/null 2>&1 || missing+=("$p")
+    done
+    [[ ${#missing[@]} -eq 0 ]] && return 0
+    if sudo -n true 2>/dev/null; then
+        log "Pre-installing build packages: ${missing[*]}"
+        sudo -n env DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true
+        sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing[@]}" >/dev/null 2>&1 || true
+    else
+        log "NOTE: optional packages missing (${missing[*]}) and passwordless sudo unavailable."
+        log "      The Hermes installer may prompt for a sudo password, or you can pre-install:"
+        log "        sudo apt-get install -y ${missing[*]}"
+    fi
+}
+
 ensure_helper_venv() {
     if PYTHONPATH="$SETUP_TARGET" python3 -c \
         'import huggingface_hub, yaml' >/dev/null 2>&1; then
@@ -125,6 +178,22 @@ ensure_helper_venv() {
     SETUP_PYTHON="$SETUP_VENV/bin/python"
 }
 
+ensure_test_sdk() {
+    local sdk_spec
+    if [[ -f "$SDK_LOCAL_PATH/pyproject.toml" ]]; then
+        sdk_spec="$SDK_LOCAL_PATH[mcp]"
+        log "Installing mcp-service-sdk for local service tests from $SDK_LOCAL_PATH"
+    else
+        sdk_spec="$SDK_PACKAGE_SPEC"
+        log "Installing mcp-service-sdk for local service tests from Git ref $SDK_GIT_REF"
+    fi
+    if [[ -n $SETUP_PYTHONPATH ]]; then
+        python3 -m pip install --quiet --upgrade --target "$SETUP_TARGET" "$sdk_spec"
+    else
+        "$SETUP_PYTHON" -m pip install --quiet --upgrade "$sdk_spec"
+    fi
+}
+
 setup_python() {
     if [[ -n $SETUP_PYTHONPATH ]]; then
         PYTHONPATH="$SETUP_PYTHONPATH${PYTHONPATH:+:$PYTHONPATH}" "$SETUP_PYTHON" "$@"
@@ -135,8 +204,19 @@ setup_python() {
 
 install_hermes() {
     if ! command -v hermes >/dev/null 2>&1; then
-        log "Installing Hermes Agent"
-        curl -fsSL "$HERMES_INSTALL_URL" | bash
+        log "Installing Hermes Agent (unattended)"
+        local installer
+        installer=$(mktemp)
+        curl -fsSL "$HERMES_INSTALL_URL" -o "$installer"
+        # Official installer flags for zero-touch installs:
+        #   --skip-setup       skip the interactive API-key/setup wizard
+        #   --non-interactive  take defaults for every prompt (no gateway prompt)
+        # Optionally pin to a validated commit for reproducible handover installs.
+        # stdin is also closed so nothing can fall back to reading a TTY.
+        local pin_args=()
+        [[ -n "$HERMES_INSTALL_COMMIT" ]] && pin_args=(--commit "$HERMES_INSTALL_COMMIT")
+        bash "$installer" --skip-setup --non-interactive "${pin_args[@]}" </dev/null
+        rm -f "$installer"
         export PATH="$HOME/.local/bin:$PATH"
     fi
     require_command hermes "Add $HOME/.local/bin to PATH after installation."
@@ -252,9 +332,14 @@ if config_path.exists():
 for fragment in fragments:
     current = merge(current, replace_repo_path(yaml.safe_load(fragment.read_text()) or {}))
 current["model"]["default"] = model_id
+current["model"]["provider"] = "custom"
 current["model"]["base_url"] = ovms_base_url
-current["providers"]["local-ovms"]["base_url"] = ovms_base_url
-current["providers"]["local-ovms"]["default_model"] = model_id
+current.setdefault("providers", {}).setdefault("custom", {})
+current["providers"]["custom"]["base_url"] = ovms_base_url
+# Restrict the CLI to the QSR MCP services only. The list-merge above appends
+# the QSR services onto Hermes' default "hermes-cli" (everything) preset, which
+# bloats the prompt and makes the 8B model slow. Override to the lean set.
+current.setdefault("platform_toolsets", {})["cli"] = ["kiosk", "order-accuracy"]
 
 temporary = config_path.with_suffix(config_path.suffix + ".tmp")
 temporary.write_text(yaml.safe_dump(current, sort_keys=False))
@@ -262,8 +347,21 @@ temporary.chmod(0o600)
 temporary.replace(config_path)
 PY
 
-    hermes config migrate >/dev/null
-    hermes config check
+    # Persist the loopback proxy bypass so the runtime `hermes` process reaches
+    # OVMS on 127.0.0.1 even when a corporate proxy is set in the shell.
+    local env_file
+    env_file="$config_dir/.env"
+    touch "$env_file"
+    chmod 600 "$env_file"
+    if ! grep -q '^NO_PROXY=' "$env_file" 2>/dev/null; then
+        {
+            echo "NO_PROXY=localhost,127.0.0.1,::1"
+            echo "no_proxy=localhost,127.0.0.1,::1"
+        } >> "$env_file"
+    fi
+
+    hermes config migrate >/dev/null </dev/null
+    hermes config check </dev/null
 }
 
 validate_stack() {
@@ -274,13 +372,9 @@ validate_stack() {
         fail "Container $OVMS_CONTAINER is not running."
     wait_for_ovms || fail "OVMS did not report $MODEL_ID as available."
 
-    log "Checking Hermes configuration and MCP registrations"
-    hermes config check
-    hermes mcp test kiosk
-    hermes mcp test order-accuracy
-
     log "Running model-independent service tests"
-    PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
+    ensure_test_sdk
+    PYTHONDONTWRITEBYTECODE=1 setup_python -m unittest discover \
         -s "$ROOT_DIR/tests/mcp-services" -p 'test_services.py' -v
 }
 
@@ -297,6 +391,7 @@ main() {
 
     check_prerequisites
     if [[ $CHECK_ONLY == false ]]; then
+        ensure_build_packages
         ensure_helper_venv
         install_hermes
         download_model

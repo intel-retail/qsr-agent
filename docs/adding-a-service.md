@@ -6,7 +6,7 @@
 
 Adding a domain requires four things:
 
-1. Create an MCP service with `mcp-service-base`.
+1. Create an MCP service with `mcp-service-sdk`.
 2. Register it in Hermes.
 3. Add its skill file.
 4. Verify discovery and one question.
@@ -20,7 +20,7 @@ From the repository root, install the shared base and create the service file:
 
 ```bash
 SERVICE_PYTHON=/absolute/path/to/service/venv/bin/python
-"$SERVICE_PYTHON" -m pip install -e './mcp-service-base[mcp]'
+"$SERVICE_PYTHON" -m pip install "mcp-service-sdk[mcp] @ git+https://github.com/sachinkaushik/edge-ai-libraries.git@<tag-or-branch>#subdirectory=libraries/mcp-service-sdk"
 mkdir -p services/inventory
 touch services/inventory/service.py
 ```
@@ -37,7 +37,7 @@ from typing import Any
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from mcp_service_base import ServiceServer
+from mcp_service_sdk import ServiceServer
 
 
 service = ServiceServer(service="inventory", store_id="multi-store")

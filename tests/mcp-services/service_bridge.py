@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Adapter for serving a ServiceServer over the test stdio transport.
 
-The QSR placeholders adopt the mcp-service-base *contract* (ServiceServer with
+The QSR placeholders adopt the mcp-service-sdk *contract* (ServiceServer with
 declared read/act tools, a deterministic policy gate, durable log, telemetry and
 `describe`) while keeping the dependency-free `StdioMcpServer` JSON-RPC transport
 used by the simulations. Tool names, JSON-Schema signatures, and JSONL tool-call
@@ -13,19 +13,11 @@ explicit JSON Schema per tool (the authoritative signature the agent sees).
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from typing import Any, Callable
 
-# Import mcp-service-base from the repository's src without installation,
-# mirroring how these servers already import the local `mcp_stdio` module.
-_BASE_SRC = Path(__file__).resolve().parents[2] / "mcp-service-base" / "src"
-if str(_BASE_SRC) not in sys.path:
-    sys.path.insert(0, str(_BASE_SRC))
+from mcp_service_sdk import ServiceServer
 
-from mcp_service_base import ServiceServer  # noqa: E402
-
-from mcp_stdio import StdioMcpServer  # noqa: E402
+from mcp_stdio import StdioMcpServer
 
 EMPTY_SCHEMA: dict[str, Any] = {"type": "object", "properties": {}, "additionalProperties": False}
 
