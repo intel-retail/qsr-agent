@@ -25,6 +25,11 @@ SDK_PACKAGE_SPEC=${SDK_PACKAGE_SPEC:-mcp-service-sdk[mcp] @ git+https://github.c
 # Hermes runs those as subprocesses, so their launcher must have mcp-service-sdk.
 MCP_VENV=${MCP_VENV:-"$ROOT_DIR/.venv/mcp"}
 MCP_VENV_PY="$MCP_VENV/bin/python"
+# Operator UI: started automatically at the end of setup. Set START_UI=false to
+# skip, or override host/port.
+START_UI=${START_UI:-true}
+QSR_UI_HOST=${QSR_UI_HOST:-127.0.0.1}
+QSR_UI_PORT=${QSR_UI_PORT:-8600}
 # Registrations are convention-based, not per-service code: each QSR sim is a
 # tests/mcp-services/<name>_server.py (auto-discovered), and real apps register
 # themselves via their own launch. This script never changes to add a service.
@@ -72,6 +77,9 @@ Optional environment variables:
     SDK_LOCAL_PATH      Local checkout path for mcp-service-sdk
     SDK_GIT_REF         Git ref for mcp-service-sdk fallback install
     MCP_VENV            Venv that launches the sim MCP servers
+    START_UI            Auto-start the operator UI after setup (default true)
+    QSR_UI_HOST         Operator UI bind host (default 127.0.0.1)
+    QSR_UI_PORT         Operator UI bind port (default 8600)
 EOF
 }
 
@@ -407,6 +415,26 @@ PY
     hermes config check </dev/null
 }
 
+start_operator_ui() {
+    if [[ "${START_UI,,}" != "true" ]]; then
+        log "START_UI=false; not starting the operator UI."
+        return 0
+    fi
+    local ui="$ROOT_DIR/operator-ui/app.py"
+    [[ -f "$ui" ]] || { log "Operator UI not found at $ui; skipping."; return 0; }
+    local pid_file="/tmp/qsr-operator-ui.pid"
+    local log_file="/tmp/qsr-operator-ui.log"
+    if [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file" 2>/dev/null)" 2>/dev/null; then
+        log "Operator UI already running (pid $(cat "$pid_file"), http://$QSR_UI_HOST:$QSR_UI_PORT)"
+        return 0
+    fi
+    log "Starting operator UI on http://$QSR_UI_HOST:$QSR_UI_PORT"
+    QSR_UI_HOST="$QSR_UI_HOST" QSR_UI_PORT="$QSR_UI_PORT" \
+        nohup python3 "$ui" > "$log_file" 2>&1 &
+    echo $! > "$pid_file"
+    log "Operator UI started (pid $(cat "$pid_file"), log: $log_file)"
+}
+
 validate_stack() {
     require_command hermes "Run scripts/setup.sh without --check to install Hermes."
     [[ -f "$MODEL_ROOT/$MODEL_ID/config.json" ]] ||
@@ -443,8 +471,11 @@ main() {
         configure_hermes
     fi
     validate_stack
+    if [[ $CHECK_ONLY == false ]]; then
+        start_operator_ui
+    fi
     log "Setup is ready. Start the agent from this repository with: hermes"
-    log "Operator UI: python3 operator-ui/app.py  (then open http://127.0.0.1:8600)"
+    log "Operator UI: http://$QSR_UI_HOST:$QSR_UI_PORT  (START_UI=false to skip; log: /tmp/qsr-operator-ui.log)"
 }
 
 main "$@"

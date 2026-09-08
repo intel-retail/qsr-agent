@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
-# Uninstall the Hermes Agent installed by scripts/setup.sh.
-# Runs fully unattended (no prompts). Safe to run repeatedly.
+# Uninstall the QSR stack installed by scripts/setup.sh: Hermes, the OVMS
+# container, and the operator UI. Runs fully unattended (no prompts). Safe to
+# run repeatedly.
 #
 # Usage:
-#   scripts/uninstall.sh                 # remove Hermes launchers + ~/.hermes
-#   KEEP_DATA=1 scripts/uninstall.sh     # remove launchers only, keep ~/.hermes
+#   scripts/uninstall.sh                 # remove Hermes + ~/.hermes + OVMS + UI
+#   KEEP_DATA=1 scripts/uninstall.sh     # keep ~/.hermes (config/history)
 #   KEEP_UV=1  scripts/uninstall.sh      # keep uv/uvx if bundled under ~/.hermes/bin
-#   REMOVE_OVMS=1 scripts/uninstall.sh   # also stop/remove the OVMS container
+#   REMOVE_OVMS=0 scripts/uninstall.sh   # leave the OVMS container running
 set -Eeuo pipefail
 
 HERMES_HOME=${HERMES_HOME:-"$HOME/.hermes"}
 BIN_DIR=${BIN_DIR:-"$HOME/.local/bin"}
 OVMS_CONTAINER=${OVMS_CONTAINER:-ovms-qwen3-8b}
+UI_PID_FILE=${UI_PID_FILE:-/tmp/qsr-operator-ui.pid}
 KEEP_DATA=${KEEP_DATA:-0}
 KEEP_UV=${KEEP_UV:-0}
-REMOVE_OVMS=${REMOVE_OVMS:-0}
+# OVMS and the UI are removed by default; set REMOVE_OVMS=0 to keep OVMS.
+REMOVE_OVMS=${REMOVE_OVMS:-1}
 
 log() { printf '[hermes-uninstall] %s\n' "$*"; }
 
@@ -25,6 +28,16 @@ stop_processes() {
     sleep 2
     pkill -KILL -f 'hermes-agent/hermes' 2>/dev/null || true
     pkill -KILL -f "$HERMES_HOME/" 2>/dev/null || true
+}
+
+stop_operator_ui() {
+    log "Stopping operator UI"
+    if [[ -f "$UI_PID_FILE" ]]; then
+        local pid; pid=$(cat "$UI_PID_FILE" 2>/dev/null || true)
+        [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
+        rm -f "$UI_PID_FILE"
+    fi
+    pkill -f 'operator-ui/app.py' 2>/dev/null || true
 }
 
 preserve_uv() {
@@ -77,10 +90,16 @@ verify() {
     log "Verifying removal"
     command -v hermes >/dev/null 2>&1 && log "WARNING: 'hermes' still on PATH at $(command -v hermes)" || log "hermes: not found (good)"
     [[ -d "$HERMES_HOME" ]] && [[ $KEEP_DATA != 1 ]] && log "WARNING: $HERMES_HOME still exists" || true
+    if [[ $REMOVE_OVMS == 1 ]] && command -v docker >/dev/null 2>&1; then
+        docker container inspect "$OVMS_CONTAINER" >/dev/null 2>&1 \
+            && log "WARNING: OVMS container $OVMS_CONTAINER still exists" \
+            || log "OVMS: removed (good)"
+    fi
 }
 
 main() {
     stop_processes
+    stop_operator_ui
     preserve_uv
     remove_launchers
     remove_data
