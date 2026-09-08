@@ -7,7 +7,8 @@ MODEL_REVISION=${MODEL_REVISION:-5c47abf4b8e12ebe8e99745bb0c1ec17e0c0abcc}
 MODEL_ROOT=${MODEL_ROOT:-"$HOME/models"}
 OVMS_IMAGE=${OVMS_IMAGE:-openvino/model_server@sha256:2a52cd2bc62d984f35f12b1cf58bb5dffe5f5d57b6ef3349b1b37229a768806b}
 OVMS_CONTAINER=${OVMS_CONTAINER:-ovms-qwen3-8b}
-OVMS_PORT=${OVMS_PORT:-8000}
+# Default off 8000 to avoid clashing with SAD's alert-service (make up binds :8000).
+OVMS_PORT=${OVMS_PORT:-4444}
 HERMES_CONFIG=${HERMES_CONFIG:-"$HOME/.hermes/config.yaml"}
 HERMES_INSTALL_URL=${HERMES_INSTALL_URL:-https://hermes-agent.nousresearch.com/install.sh}
 SDK_LOCAL_PATH=${SDK_LOCAL_PATH:-"$ROOT_DIR/../../oep/edge-ai-libraries/libraries/mcp-service-sdk"}
@@ -20,6 +21,13 @@ HERMES_INSTALL_COMMIT=${HERMES_INSTALL_COMMIT:-}
 SETUP_VENV=${SETUP_VENV:-"$ROOT_DIR/.venv/qsr-setup"}
 SETUP_TARGET=${SETUP_TARGET:-"$ROOT_DIR/.venv/qsr-setup-target"}
 SDK_PACKAGE_SPEC=${SDK_PACKAGE_SPEC:-mcp-service-sdk[mcp] @ git+https://github.com/sachinkaushik/edge-ai-libraries.git@$SDK_GIT_REF#subdirectory=libraries/mcp-service-sdk}
+# Dedicated venv whose interpreter launches the kiosk/order-accuracy MCP servers.
+# Hermes runs those as subprocesses, so their launcher must have mcp-service-sdk.
+MCP_VENV=${MCP_VENV:-"$ROOT_DIR/.venv/mcp"}
+MCP_VENV_PY="$MCP_VENV/bin/python"
+# Registrations are convention-based, not per-service code: each QSR sim is a
+# tests/mcp-services/<name>_server.py (auto-discovered), and real apps register
+# themselves via their own launch. This script never changes to add a service.
 SETUP_PYTHON=python3
 SETUP_PYTHONPATH=
 CHECK_ONLY=false
@@ -58,11 +66,12 @@ Optional environment variables:
   OVMS_PORT           Loopback port for OVMS (default: 8000)
   HERMES_CONFIG       Hermes YAML path
   HERMES_INSTALL_URL  Hermes installer URL
-        SDK_LOCAL_PATH      Local checkout path for mcp-service-sdk
-        SDK_GIT_REF         Git ref for mcp-service-sdk fallback install
-  SETUP_VENV          Helper virtual environment path
+    SETUP_VENV          Helper virtual environment path
     SETUP_TARGET        Fallback isolated dependency path
-        SDK_PACKAGE_SPEC    Override package spec for mcp-service-sdk
+    SDK_PACKAGE_SPEC    Override package spec for mcp-service-sdk
+    SDK_LOCAL_PATH      Local checkout path for mcp-service-sdk
+    SDK_GIT_REF         Git ref for mcp-service-sdk fallback install
+    MCP_VENV            Venv that launches the sim MCP servers
 EOF
 }
 
@@ -194,6 +203,26 @@ ensure_test_sdk() {
     fi
 }
 
+# Prefer a local SDK checkout (fast) and fall back to the pinned Git package.
+_sdk_spec() {
+    if [[ -f "$SDK_LOCAL_PATH/pyproject.toml" ]]; then
+        printf '%s[mcp]' "$SDK_LOCAL_PATH"
+    else
+        printf '%s' "$SDK_PACKAGE_SPEC"
+    fi
+}
+
+ensure_mcp_venv() {
+    if [[ ! -x "$MCP_VENV_PY" ]]; then
+        log "Creating MCP service venv at $MCP_VENV"
+        python3 -m venv "$MCP_VENV" || fail "Could not create $MCP_VENV. Install python3-venv."
+    fi
+    "$MCP_VENV_PY" -m pip install --quiet --upgrade pip
+    log "Installing mcp-service-sdk into the MCP service venv"
+    "$MCP_VENV_PY" -m pip install --quiet --upgrade "$(_sdk_spec)" ||
+        fail "Failed to install mcp-service-sdk into $MCP_VENV"
+}
+
 setup_python() {
     if [[ -n $SETUP_PYTHONPATH ]]; then
         PYTHONPATH="$SETUP_PYTHONPATH${PYTHONPATH:+:$PYTHONPATH}" "$SETUP_PYTHON" "$@"
@@ -299,9 +328,11 @@ root = Path(os.environ["ROOT_DIR"])
 config_path = Path(os.environ["HERMES_CONFIG"])
 model_id = os.environ["MODEL_ID"]
 ovms_base_url = f"http://127.0.0.1:{os.environ['OVMS_PORT']}/v3"
+# Base config + remote/external service registrations (e.g. SAD). Local sims are
+# auto-discovered below, so they are not listed in any fragment.
 fragments = [
     root / "agent-config/hermes/config.example.yaml",
-    root / "tests/mcp-services/hermes-mcp.example.yaml",
+    root / "agent-config/hermes/remote-mcp.example.yaml",
 ]
 
 
@@ -336,10 +367,22 @@ current["model"]["provider"] = "custom"
 current["model"]["base_url"] = ovms_base_url
 current.setdefault("providers", {}).setdefault("custom", {})
 current["providers"]["custom"]["base_url"] = ovms_base_url
-# Restrict the CLI to the QSR MCP services only. The list-merge above appends
-# the QSR services onto Hermes' default "hermes-cli" (everything) preset, which
-# bloats the prompt and makes the 8B model slow. Override to the lean set.
-current.setdefault("platform_toolsets", {})["cli"] = ["kiosk", "order-accuracy"]
+
+# Auto-register the QSR-owned simulation services by convention: every
+# tests/mcp-services/<name>_server.py becomes an MCP server launched by the SDK
+# venv interpreter. Add a new sim by dropping a *_server.py — no edits here.
+# Entries not managed here (e.g. real apps that self-register via their own
+# `make up`) are preserved because we only touch discovered sim names.
+servers = current.setdefault("mcp_servers", {})
+venv_py = str(root / ".venv/mcp/bin/python")
+for script in sorted((root / "tests/mcp-services").glob("*_server.py")):
+    name = script.stem[: -len("_server")].replace("_", "-")
+    servers[name] = {"command": venv_py, "args": [str(script)], "enabled": True}
+
+# Derive the lean CLI toolset from whatever services are registered (sims plus
+# any self-registered real apps), so Hermes' heavy default preset never bloats
+# the prompt and new services are picked up automatically.
+current.setdefault("platform_toolsets", {})["cli"] = sorted(servers)
 
 temporary = config_path.with_suffix(config_path.suffix + ".tmp")
 temporary.write_text(yaml.safe_dump(current, sort_keys=False))
@@ -372,9 +415,9 @@ validate_stack() {
         fail "Container $OVMS_CONTAINER is not running."
     wait_for_ovms || fail "OVMS did not report $MODEL_ID as available."
 
+    [[ -x "$MCP_VENV_PY" ]] || ensure_mcp_venv
     log "Running model-independent service tests"
-    ensure_test_sdk
-    PYTHONDONTWRITEBYTECODE=1 setup_python -m unittest discover \
+    PYTHONDONTWRITEBYTECODE=1 "$MCP_VENV_PY" -m unittest discover \
         -s "$ROOT_DIR/tests/mcp-services" -p 'test_services.py' -v
 }
 
@@ -396,10 +439,12 @@ main() {
         install_hermes
         download_model
         start_ovms
+        ensure_mcp_venv
         configure_hermes
     fi
     validate_stack
     log "Setup is ready. Start the agent from this repository with: hermes"
+    log "Operator UI: python3 operator-ui/app.py  (then open http://127.0.0.1:8600)"
 }
 
 main "$@"
