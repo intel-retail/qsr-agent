@@ -6,9 +6,8 @@ from __future__ import annotations
 import os
 from typing import Any
 
-# This import also makes the sibling mcp-service-base source tree importable.
 from service_bridge import serve
-from mcp_service_base import ServiceServer
+from mcp_service_sdk import ServiceServer
 
 
 def run_service(

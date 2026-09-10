@@ -16,7 +16,7 @@ Operator -> Hermes -> OVMS/Qwen -> MCP service -> domain system
 
 The repository includes:
 
-- `mcp-service-base/`: framework-neutral service, policy, log, and MCP binding.
+- `mcp-service-sdk` as a Git package dependency: framework-neutral service, policy, log, and MCP binding.
 - `tests/mcp-services/`: runnable Kiosk and Order Accuracy simulations.
 - `qsr-skills/`: Hermes procedures for domain Q&A and actions.
 - `agent-config/hermes/`: reusable local and remote configuration fragments.

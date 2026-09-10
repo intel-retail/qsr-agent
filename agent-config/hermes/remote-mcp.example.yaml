@@ -1,19 +1,24 @@
-# Merge this block into ~/.hermes/config.yaml and replace each hostname.
-# Put TLS/authentication at a reverse proxy on each service machine.
+# Remote / external MCP services registered with Hermes.
+# setup.sh merges this file, so add real remote endpoints here. Local simulation
+# services are auto-discovered from tests/mcp-services/*_server.py and must NOT
+# be listed here. Put TLS/authentication at a reverse proxy on each service host.
+
 mcp_servers:
-  kiosk:
-    url: https://kiosk-service.example.internal/mcp
+  # Suspicious Activity (kitchen food safety). SAD runs its own MCP service via
+  # `make up` in the storewide-loss-prevention repo (streamable-http on :9000).
+  suspicious-activity:
+    url: http://127.0.0.1:9000/mcp
     transport: streamable-http
     enabled: true
     connect_timeout: 15
     timeout: 120
-    headers:
-      Authorization: Bearer ${KIOSK_MCP_TOKEN}
-  order-accuracy:
-    url: https://order-accuracy.example.internal/mcp
-    transport: streamable-http
-    enabled: true
-    connect_timeout: 15
-    timeout: 120
-    headers:
-      Authorization: Bearer ${ORDER_ACCURACY_MCP_TOKEN}
+
+  # Template — copy for a remote, authenticated service on another host:
+  # your-service:
+  #   url: https://your-service.example.internal/mcp
+  #   transport: streamable-http
+  #   enabled: true
+  #   connect_timeout: 15
+  #   timeout: 120
+  #   headers:
+  #     Authorization: Bearer ${YOUR_SERVICE_MCP_TOKEN}

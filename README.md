@@ -31,6 +31,58 @@ Validate an existing installation without changing it:
 ./scripts/setup.sh --check
 ```
 
+## Operator UI
+
+A lightweight web UI lets an operator chat with the agent and see which services
+are connected, without using the CLI. It has no extra dependencies (Python
+standard library only) and drives the same Hermes agent under the hood.
+
+`./scripts/setup.sh` starts it automatically at the end and prints the URL.
+By default it binds on all interfaces so you can open it from another machine
+on the LAN at `http://<host>:8600`. On the same host, use
+`http://127.0.0.1:8600`. Set `START_UI=false` to skip the auto-start, or set
+`QSR_UI_HOST=127.0.0.1` to restrict it to loopback.
+
+To start it manually (or restart it later):
+
+```bash
+python3 operator-ui/app.py            # serves on http://<host>:8600
+```
+
+If you kept the default LAN binding, open `http://<host>:8600` from your
+browser. If you set `QSR_UI_HOST=127.0.0.1`, forward the port first when the
+agent is on a remote box:
+
+```bash
+ssh -L 8600:127.0.0.1:8600 <user>@<host>
+```
+
+The left panel lists connected MCP apps with a live status and tool count; the
+right panel is the chat. Ask questions like "List all suspicious-activity zones"
+or "What is our order accuracy rate?" and the agent answers from the live MCP
+services.
+
+Options: `START_UI` (default `true`), `QSR_UI_HOST` (default `0.0.0.0`),
+`QSR_UI_PORT` (default `8600`). When started by setup, logs go to
+`/tmp/qsr-operator-ui.log`.
+
+## Uninstall
+
+Tear down everything setup installed — Hermes, the OVMS container, and the
+operator UI:
+
+```bash
+./scripts/uninstall.sh
+```
+
+Toggles:
+
+- `REMOVE_OVMS=0` — keep the OVMS container.
+- `KEEP_DATA=1` — keep `~/.hermes` (config and history).
+- `KEEP_UV=1` — preserve bundled `uv`/`uvx`.
+
+Model files under `~/models` and the local venvs (`.venv/`) are left in place.
+
 ## Documentation
 
 | Document | Use it for |
@@ -44,10 +96,11 @@ Validate an existing installation without changing it:
 
 | Path | Purpose |
 |---|---|
-| `mcp-service-base/` | Framework-neutral service contract, logging, policy, delivery, and MCP binding |
+| `mcp-service-sdk` Git dependency | Framework-neutral service contract, logging, policy, delivery, and MCP binding |
 | `tests/mcp-services/` | Runnable Kiosk and Order Accuracy simulations |
 | `qsr-skills/` | Hermes domain routing and interpretation procedures |
 | `agent-config/hermes/` | Local and remote Hermes configuration fragments |
+| `operator-ui/` | Standalone web chat UI + connected-services panel (stdlib only) |
 | `scripts/setup.sh` | Idempotent local installation and validation |
 
 ## Current Scope
