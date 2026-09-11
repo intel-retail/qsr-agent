@@ -11,8 +11,11 @@ OVMS_CONTAINER=${OVMS_CONTAINER:-ovms-qwen3-8b}
 OVMS_PORT=${OVMS_PORT:-4444}
 HERMES_CONFIG=${HERMES_CONFIG:-"$HOME/.hermes/config.yaml"}
 HERMES_INSTALL_URL=${HERMES_INSTALL_URL:-https://hermes-agent.nousresearch.com/install.sh}
-SDK_LOCAL_PATH=${SDK_LOCAL_PATH:-"$ROOT_DIR/../../oep/edge-ai-libraries/libraries/mcp-service-sdk"}
+# The SDK is always installed from Git (no local-checkout dependency).
+SDK_GIT_URL=${SDK_GIT_URL:-https://github.com/sachinkaushik/edge-ai-libraries.git}
 SDK_GIT_REF=${SDK_GIT_REF:-mcp}
+SDK_SUBDIR=${SDK_SUBDIR:-libraries/mcp-service-sdk}
+SDK_INSTALL_DIR=""
 # Optional: pin Hermes to a validated commit (full 40-char SHA). The installer
 # tracks `main` by default, and newer builds have changed behavior (e.g. a
 # >=64K context-window requirement). Set this to the SHA the stack was
@@ -20,7 +23,10 @@ SDK_GIT_REF=${SDK_GIT_REF:-mcp}
 HERMES_INSTALL_COMMIT=${HERMES_INSTALL_COMMIT:-}
 SETUP_VENV=${SETUP_VENV:-"$ROOT_DIR/.venv/qsr-setup"}
 SETUP_TARGET=${SETUP_TARGET:-"$ROOT_DIR/.venv/qsr-setup-target"}
-SDK_PACKAGE_SPEC=${SDK_PACKAGE_SPEC:-mcp-service-sdk[mcp] @ git+https://github.com/sachinkaushik/edge-ai-libraries.git@$SDK_GIT_REF#subdirectory=libraries/mcp-service-sdk}
+# NOTE: we intentionally do NOT use `pip install git+...#subdirectory=...`. pip
+# would run `git submodule update --init --recursive` and pull the entire
+# edge-ai-libraries submodule tree (anomalib, flann, geti, ...), stalling setup.
+# resolve_sdk_dir clones only the SDK subdirectory (sparse, no submodules).
 # Dedicated venv whose interpreter launches the kiosk/order-accuracy MCP servers.
 # Hermes runs those as subprocesses, so their launcher must have mcp-service-sdk.
 MCP_VENV=${MCP_VENV:-"$ROOT_DIR/.venv/mcp"}
@@ -28,6 +34,7 @@ MCP_VENV_PY="$MCP_VENV/bin/python"
 # Operator UI: started automatically at the end of setup. Set START_UI=false to
 # skip, or override host/port.
 START_UI=${START_UI:-true}
+WARM_UP_UI=${WARM_UP_UI:-true}
 # Bind on all interfaces by default so the UI is reachable from a browser on
 # another machine without SSH port forwarding. Set QSR_UI_HOST=127.0.0.1 to
 # restrict to loopback.
@@ -76,11 +83,12 @@ Optional environment variables:
   HERMES_INSTALL_URL  Hermes installer URL
     SETUP_VENV          Helper virtual environment path
     SETUP_TARGET        Fallback isolated dependency path
-    SDK_PACKAGE_SPEC    Override package spec for mcp-service-sdk
-    SDK_LOCAL_PATH      Local checkout path for mcp-service-sdk
-    SDK_GIT_REF         Git ref for mcp-service-sdk fallback install
+    SDK_GIT_URL         Git URL for mcp-service-sdk (default sachinkaushik fork)
+    SDK_GIT_REF         Git ref/branch for mcp-service-sdk (default mcp)
+    SDK_SUBDIR          Repo subdirectory holding the SDK
     MCP_VENV            Venv that launches the sim MCP servers
     START_UI            Auto-start the operator UI after setup (default true)
+    WARM_UP_UI          Run one warm-up UI chat request during setup (default true)
     QSR_UI_HOST         Operator UI bind host (default 0.0.0.0)
     QSR_UI_PORT         Operator UI bind port (default 8600)
 EOF
@@ -199,28 +207,33 @@ ensure_helper_venv() {
 }
 
 ensure_test_sdk() {
-    local sdk_spec
-    if [[ -f "$SDK_LOCAL_PATH/pyproject.toml" ]]; then
-        sdk_spec="$SDK_LOCAL_PATH[mcp]"
-        log "Installing mcp-service-sdk for local service tests from $SDK_LOCAL_PATH"
-    else
-        sdk_spec="$SDK_PACKAGE_SPEC"
-        log "Installing mcp-service-sdk for local service tests from Git ref $SDK_GIT_REF"
-    fi
+    resolve_sdk_dir
+    log "Installing mcp-service-sdk for local service tests from $SDK_INSTALL_DIR"
     if [[ -n $SETUP_PYTHONPATH ]]; then
-        python3 -m pip install --quiet --upgrade --target "$SETUP_TARGET" "$sdk_spec"
+        python3 -m pip install --quiet --upgrade --target "$SETUP_TARGET" "$SDK_INSTALL_DIR[mcp]"
     else
-        "$SETUP_PYTHON" -m pip install --quiet --upgrade "$sdk_spec"
+        "$SETUP_PYTHON" -m pip install --quiet --upgrade "$SDK_INSTALL_DIR[mcp]"
     fi
 }
 
-# Prefer a local SDK checkout (fast) and fall back to the pinned Git package.
-_sdk_spec() {
-    if [[ -f "$SDK_LOCAL_PATH/pyproject.toml" ]]; then
-        printf '%s[mcp]' "$SDK_LOCAL_PATH"
-    else
-        printf '%s' "$SDK_PACKAGE_SPEC"
-    fi
+# Fetch the SDK from Git only, without submodules. Installing via pip's
+# `git+...#subdirectory=...` runs `git submodule update --init --recursive`,
+# which clones the whole edge-ai-libraries submodule tree and stalls setup. A
+# shallow, sparse, no-submodule clone of just the SDK subdir is git-only and
+# fast. Cached in SDK_INSTALL_DIR so we clone at most once per run.
+resolve_sdk_dir() {
+    [[ -n $SDK_INSTALL_DIR && -f "$SDK_INSTALL_DIR/pyproject.toml" ]] && return
+    local dest
+    dest=$(mktemp -d)
+    log "Fetching mcp-service-sdk from $SDK_GIT_URL@$SDK_GIT_REF (sparse, no submodules)"
+    git clone --depth 1 --filter=blob:none --sparse --no-recurse-submodules \
+        --branch "$SDK_GIT_REF" "$SDK_GIT_URL" "$dest" >/dev/null 2>&1 ||
+        fail "Could not clone mcp-service-sdk from $SDK_GIT_URL@$SDK_GIT_REF"
+    git -C "$dest" sparse-checkout set "$SDK_SUBDIR" >/dev/null 2>&1 ||
+        fail "Could not sparse-checkout $SDK_SUBDIR"
+    [[ -f "$dest/$SDK_SUBDIR/pyproject.toml" ]] ||
+        fail "Cloned SDK is missing pyproject.toml at $dest/$SDK_SUBDIR"
+    SDK_INSTALL_DIR="$dest/$SDK_SUBDIR"
 }
 
 ensure_mcp_venv() {
@@ -229,8 +242,9 @@ ensure_mcp_venv() {
         python3 -m venv "$MCP_VENV" || fail "Could not create $MCP_VENV. Install python3-venv."
     fi
     "$MCP_VENV_PY" -m pip install --quiet --upgrade pip
-    log "Installing mcp-service-sdk into the MCP service venv"
-    "$MCP_VENV_PY" -m pip install --quiet --upgrade "$(_sdk_spec)" ||
+    resolve_sdk_dir
+    log "Installing mcp-service-sdk into the MCP service venv from $SDK_INSTALL_DIR"
+    "$MCP_VENV_PY" -m pip install --quiet --upgrade "$SDK_INSTALL_DIR[mcp]" ||
         fail "Failed to install mcp-service-sdk into $MCP_VENV"
 }
 
@@ -316,6 +330,29 @@ start_ovms() {
     wait_for_ovms
 }
 
+# OpenVINO compiles the model on the first inference, not at load. Without this,
+# the operator's first question after setup pays a 30-60s one-time compile.
+# Sending one throwaway completion here moves that cost into setup instead.
+warm_up_model() {
+    log "Warming up the model (first-inference compile)"
+    OVMS_URL="http://127.0.0.1:$OVMS_PORT/v3/chat/completions" MODEL_ID="$MODEL_ID" \
+        python3 - <<'PY' || log "NOTE: model warm-up call did not complete; first query may be slow."
+import json
+import os
+import urllib.request
+
+url = os.environ["OVMS_URL"]
+payload = json.dumps({
+    "model": os.environ["MODEL_ID"],
+    "messages": [{"role": "user", "content": "ready"}],
+    "max_tokens": 1,
+}).encode()
+req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+with urllib.request.urlopen(req, timeout=180) as response:
+    response.read()
+PY
+}
+
 configure_hermes() {
     local config_dir backup_path
     config_dir=$(dirname "$HERMES_CONFIG")
@@ -330,8 +367,10 @@ configure_hermes() {
         OVMS_PORT="$OVMS_PORT" \
         setup_python - <<'PY'
 import os
+import socket
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
@@ -390,10 +429,39 @@ for script in sorted((root / "tests/mcp-services").glob("*_server.py")):
     name = script.stem[: -len("_server")].replace("_", "-")
     servers[name] = {"command": venv_py, "args": [str(script)], "enabled": True}
 
-# Derive the lean CLI toolset from whatever services are registered (sims plus
-# any self-registered real apps), so Hermes' heavy default preset never bloats
-# the prompt and new services are picked up automatically.
-current.setdefault("platform_toolsets", {})["cli"] = sorted(servers)
+
+# A remote MCP server (one with a `url`) is only enabled if its endpoint is
+# reachable right now. This prevents a stopped/dead service (e.g. SAD not
+# running) from costing an 8s connect-timeout on every agent turn. Local sims
+# use `command` and are spawned on demand, so they are left enabled. Purely
+# convention-based: no per-service code, and a service comes back online by
+# rerunning setup (or re-enabling it) once its endpoint responds.
+def _endpoint_alive(url: str, timeout: float = 2.0) -> bool:
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+for name, spec in servers.items():
+    if isinstance(spec, dict) and spec.get("url"):
+        alive = _endpoint_alive(str(spec["url"]))
+        spec["enabled"] = alive
+        print(f"[qsr-setup] remote MCP '{name}' {'reachable, enabled' if alive else 'unreachable, disabled'} ({spec['url']})")
+
+# Derive the lean CLI toolset from the ENABLED services only (sims plus any
+# reachable real apps), so Hermes' heavy default preset never bloats the prompt,
+# new services are picked up automatically, and disabled/dead remotes are not
+# referenced.
+enabled_servers = [
+    name for name, spec in servers.items()
+    if not isinstance(spec, dict) or spec.get("enabled", True)
+]
+current.setdefault("platform_toolsets", {})["cli"] = sorted(enabled_servers)
 
 temporary = config_path.with_suffix(config_path.suffix + ".tmp")
 temporary.write_text(yaml.safe_dump(current, sort_keys=False))
@@ -481,6 +549,26 @@ start_operator_ui() {
     log "Operator UI started (pid $(cat "$pid_file"), http://$QSR_UI_HOST:$QSR_UI_PORT, log: $log_file)"
 }
 
+operator_ui_probe_url() {
+    local probe_host="$QSR_UI_HOST"
+    [[ "$probe_host" == "0.0.0.0" ]] && probe_host="127.0.0.1"
+    printf 'http://%s:%s' "$probe_host" "$QSR_UI_PORT"
+}
+
+warm_up_operator_ui() {
+    if [[ "${START_UI,,}" != "true" || "${WARM_UP_UI,,}" != "true" ]]; then
+        return 0
+    fi
+    local base_url
+    base_url=$(operator_ui_probe_url)
+    log "Warming up Hermes through the operator UI"
+    curl -fsS --max-time 180 \
+        -H 'Content-Type: application/json' \
+        -d '{"question":"Reply with exactly: ready"}' \
+        "$base_url/ask" >/dev/null ||
+        log "NOTE: operator UI warm-up did not complete; first query may be slow."
+}
+
 validate_stack() {
     require_command hermes "Run scripts/setup.sh without --check to install Hermes."
     [[ -f "$MODEL_ROOT/$MODEL_ID/config.json" ]] ||
@@ -513,15 +601,17 @@ main() {
         install_hermes
         download_model
         start_ovms
+        warm_up_model
         ensure_mcp_venv
         configure_hermes
     fi
     validate_stack
     if [[ $CHECK_ONLY == false ]]; then
         start_operator_ui
+        warm_up_operator_ui
     fi
     log "Setup is ready. Start the agent from this repository with: hermes"
-    log "Operator UI: http://$QSR_UI_HOST:$QSR_UI_PORT  (START_UI=false to skip; log: /tmp/qsr-operator-ui.log)"
+    log "Operator UI: http://$QSR_UI_HOST:$QSR_UI_PORT  (START_UI=false to skip; WARM_UP_UI=false to skip warm-up; log: /tmp/qsr-operator-ui.log)"
 }
 
 main "$@"
