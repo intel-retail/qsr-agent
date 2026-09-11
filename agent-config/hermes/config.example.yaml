@@ -17,9 +17,12 @@ model:
   base_url: http://127.0.0.1:4444/v3
   api_key: "local-ovms-no-auth"
   context_length: 64000
-  max_tokens: 4096
-  # Non-streaming is the safe path for self-hosted OpenAI-compatible servers.
-  streaming: false
+  # Keep outputs short: on an 8B model, generation time scales with tokens
+  # emitted, and long tool-driven answers dominate operator latency.
+  max_tokens: 1536
+  # Stream tokens so the operator UI can render the answer as it is generated
+  # instead of waiting for the whole turn. The UI reads hermes -z line by line.
+  streaming: true
 
 # Per-endpoint overrides for the custom (OVMS) provider.
 # extra_body disables Qwen3's "thinking" mode: otherwise every turn generates a
@@ -39,6 +42,8 @@ agent:
   run_budget_seconds: 1800
   tool_use_enforcement: "true"
   session_stall_timeout: 900
+  # Fewer planning tokens per turn; the local 8B model is latency-bound.
+  reasoning_effort: low
 
 tools:
   tool_search:

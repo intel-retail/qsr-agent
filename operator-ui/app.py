@@ -12,15 +12,19 @@ Environment:
     QSR_UI_PORT   bind port   (default 8600)
     HERMES_BIN    hermes path (default ~/.local/bin/hermes)
     HERMES_TIMEOUT  per-question seconds (default 300)
+    HERMES_REASONING reasoning effort per turn (default low)
 """
 
 from __future__ import annotations
 
 import json
 import os
+import queue
 import re
 import shutil
 import subprocess
+import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -28,6 +32,11 @@ HOST = os.environ.get("QSR_UI_HOST", "0.0.0.0")
 PORT = int(os.environ.get("QSR_UI_PORT", "8600"))
 HERMES_BIN = os.environ.get("HERMES_BIN", os.path.expanduser("~/.local/bin/hermes"))
 HERMES_TIMEOUT = float(os.environ.get("HERMES_TIMEOUT", "300"))
+HERMES_REASONING = os.environ.get("HERMES_REASONING", "low")
+HERMES_RESPONSE_STYLE = os.environ.get(
+    "HERMES_RESPONSE_STYLE",
+    "Use the relevant tool before answering factual or numeric questions. Do not estimate missing values. Answer in one short sentence unless the user explicitly asks for detail.",
+)
 
 _INDEX_PATH = Path(__file__).parent / "static" / "index.html"
 
@@ -45,6 +54,10 @@ def _agent_env(hermes: str) -> dict:
     env["NO_PROXY"] = "localhost,127.0.0.1,::1"
     env["no_proxy"] = "localhost,127.0.0.1,::1"
     return env
+
+
+def _prepare_question(question: str) -> str:
+    return f"{question.rstrip()}\n\n{HERMES_RESPONSE_STYLE}"
 
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -129,9 +142,12 @@ def ask_hermes(question: str) -> dict:
 
     env = _agent_env(hermes)
 
+    # Lower reasoning effort per invocation to cut latency on the local 8B model;
+    # config.yaml sets the default but this keeps the UI fast even if that drifts.
+    cmd = [hermes, "--reasoning", HERMES_REASONING, "-z", _prepare_question(question)]
     try:
         proc = subprocess.run(
-            [hermes, "-z", question],
+            cmd,
             capture_output=True,
             text=True,
             timeout=HERMES_TIMEOUT,
@@ -147,10 +163,83 @@ def ask_hermes(question: str) -> dict:
     return {"ok": True, "answer": answer or "(no answer)"}
 
 
+def stream_hermes(question: str):
+    """Yield answer text incrementally as hermes -z produces it (model streaming).
+
+    Requires model.streaming: true in Hermes config so oneshot flushes tokens as
+    they are generated. Falls back to a single final chunk otherwise.
+    """
+    hermes = _resolve_hermes()
+    if not hermes:
+        yield {"event": "error", "error": "hermes binary not found"}
+        return
+
+    env = _agent_env(hermes)
+    cmd = [hermes, "--reasoning", HERMES_REASONING, "-z", _prepare_question(question)]
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            env=env,
+            text=True,
+            bufsize=1,  # line-buffered so partial output reaches the browser
+        )
+    except OSError as exc:
+        yield {"event": "error", "error": f"could not start hermes: {exc}"}
+        return
+
+    outbox: queue.Queue[dict] = queue.Queue()
+
+    def _pump_stdout() -> None:
+        assert proc.stdout is not None
+        try:
+            for line in proc.stdout:
+                outbox.put({"event": "delta", "text": line})
+        finally:
+            outbox.put({"event": "eof"})
+
+    threading.Thread(target=_pump_stdout, daemon=True).start()
+    yield {"event": "start", "message": "Connecting to Hermes..."}
+    got_output = False
+    last_heartbeat = time.monotonic()
+    try:
+        while True:
+            try:
+                chunk = outbox.get(timeout=0.5)
+            except queue.Empty:
+                now = time.monotonic()
+                if now - last_heartbeat >= 1.0:
+                    last_heartbeat = now
+                    yield {"event": "heartbeat", "message": "Waiting for Hermes..."}
+                if proc.poll() is not None:
+                    break
+                continue
+            if chunk.get("event") == "eof":
+                break
+            got_output = True
+            yield chunk
+        proc.wait(timeout=5)
+    except Exception as exc:  # noqa: BLE001 - surface any read/wait failure to the client
+        proc.kill()
+        yield {"event": "error", "error": str(exc)[:2000]}
+        return
+
+    if not got_output and proc.returncode not in (0, None):
+        yield {"event": "error", "error": "Hermes returned no output"}
+        return
+    yield {"event": "done"}
+
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code: int, body: bytes, content_type: str) -> None:
         self.send_response(code)
         self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-store, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -170,7 +259,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, b"not found", "text/plain; charset=utf-8")
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path != "/ask":
+        if self.path not in ("/ask", "/ask/stream"):
             self._send(404, b'{"ok":false,"error":"not found"}', "application/json")
             return
         length = int(self.headers.get("Content-Length", "0") or "0")
@@ -183,8 +272,32 @@ class Handler(BaseHTTPRequestHandler):
         if not question:
             self._send(400, b'{"ok":false,"error":"empty question"}', "application/json")
             return
+        if self.path == "/ask/stream":
+            self._stream_answer(question)
+            return
         result = ask_hermes(question)
         self._send(200, json.dumps(result).encode("utf-8"), "application/json")
+
+    def _stream_answer(self, question: str) -> None:
+        """Server-Sent Events: emit answer chunks as hermes generates them."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store, no-cache, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        try:
+            self.wfile.write(b": stream-open\n\n")
+            self.wfile.flush()
+            for chunk in stream_hermes(question):
+                payload = f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
+                self.wfile.write(payload)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            return  # operator navigated away mid-answer
+
 
     def log_message(self, *_args) -> None:  # keep stdout clean
         pass
