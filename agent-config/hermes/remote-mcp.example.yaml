@@ -33,6 +33,34 @@ mcp_servers:
     connect_timeout: 15
     timeout: 120
 
+  # EdgeMart café-day sim (customers, orders, tables, queue) from the
+  # qsr-store-pos-agent repo's `sim-service-mcp` compose service
+  # (streamable-http on :3101). See that repo's backend/src/sim-service/SIM-SERVICE.md.
+  edgemart-sim-service:
+    url: ${EDGEMART_SIM_MCP_URL:-http://host.docker.internal:3101/mcp}
+    transport: streamable-http
+    enabled: true
+    connect_timeout: 15
+    timeout: 60
+
+  # EdgeMart table occupancy & cleaning sim, same repo's `table-sim-service-mcp`
+  # compose service (streamable-http on :3201).
+  edgemart-table-sim-service:
+    url: ${EDGEMART_TABLE_SIM_MCP_URL:-http://host.docker.internal:3201/mcp}
+    transport: streamable-http
+    enabled: true
+    connect_timeout: 15
+    timeout: 60
+
+  # EdgeMart footfall/movement sim (read-only), same repo's
+  # `footfall-sim-service-mcp` compose service (streamable-http on :3301).
+  edgemart-footfall-sim-service:
+    url: ${EDGEMART_FOOTFALL_SIM_MCP_URL:-http://host.docker.internal:3301/mcp}
+    transport: streamable-http
+    enabled: true
+    connect_timeout: 15
+    timeout: 60
+
   # Template — copy for a remote, authenticated service on another host:
   # your-service:
   #   url: https://your-service.example.internal/mcp
