@@ -35,8 +35,10 @@ calls for a two-date comparison). Include the date range used in the answer.
 
 `mark_table_cleared` and `inject_event` change operational state.
 
-1. Call `get_current_snapshot` or `get_table_history`-equivalent evidence first
-   to confirm the table/ref and its current state.
+1. Call `get_current_snapshot` (check the row for the target `ref`) or
+   `tail_events` (filtered to events for that `ref`) first to confirm the
+   table/ref and its current state — this service has no `get_table_history`
+   tool; that's `table-management`'s tool for `edgemart-table-sim-service`.
 2. Present the proposed change and reason.
 3. Obtain explicit user approval in the current conversation.
 4. Call the action tool with only approved values.
