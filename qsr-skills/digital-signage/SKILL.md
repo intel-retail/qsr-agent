@@ -14,6 +14,16 @@ Use the `digital-signage` MCP service as the only source of live signage state
 and as the only way to change what is displayed. Never answer from memory or
 an earlier turn when a fresh tool call is available.
 
+Any request to show, trigger, select, or clear an ad — including video ads
+described in free text — REQUIRES an actual `digital-signage` tool call before
+you respond. Never compose a response describing what a tool call "will do"
+or "is now doing" without having actually invoked it in this turn: a real
+response from `trigger_ad`/`trigger_video_ad`/`select_dynamic_ad` always
+quotes the exact item name the service resolved and, for video, always
+includes the phrase "this can take a few minutes" verbatim. If your draft
+reply doesn't contain output copied directly from a tool result, you have not
+called the tool yet — call it now instead of sending that reply.
+
 ## Contract Discovery
 
 Before the first digital-signage tool call in a conversation, call `describe`
