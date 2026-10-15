@@ -24,6 +24,18 @@ includes the phrase "this can take a few minutes" verbatim. If your draft
 reply doesn't contain output copied directly from a tool result, you have not
 called the tool yet — call it now instead of sending that reply.
 
+## Video ads specifically take longer — this is expected, not an error
+
+`trigger_video_ad` itself always returns IMMEDIATELY (the video generates in
+the background afterward); the tool call does not block or hang. There is no
+reason to skip calling it. For "play/show/trigger a video ad" requests:
+1. Call `trigger_video_ad` right now, with `item` set to the named product
+   (preferred) or `description` set to the user's free text (only if no
+   product name was given). Do this before writing any reply text.
+2. Your reply must be the tool's returned string, verbatim or near-verbatim
+   (it already contains "(this can take a few minutes)" — keep that phrase).
+   Do not shorten it, round the duration, or invent your own wording.
+
 ## Contract Discovery
 
 Before the first digital-signage tool call in a conversation, call `describe`
