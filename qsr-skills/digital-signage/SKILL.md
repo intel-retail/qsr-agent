@@ -1,0 +1,40 @@
+---
+name: digital-signage
+description: "Trigger, select, and inspect in-store digital signage advertisements via the Digital Signage MCP service (product-detection-driven and agent-commanded ads)."
+version: 1.0.0
+platforms: [linux]
+metadata:
+  hermes:
+    tags: [QSR, Digital-Signage, Advertising, Retail-Media]
+---
+
+# Digital Signage
+
+Use the `digital-signage` MCP service as the only source of live signage state
+and as the only way to change what is displayed. Never answer from memory or
+an earlier turn when a fresh tool call is available.
+
+## Contract Discovery
+
+Before the first digital-signage tool call in a conversation, call `describe`
+to confirm the current read and action tools available. Do not use `describe`
+as evidence for live ad state.
+
+## Capability Routing
+
+| User intent or question | Required capability | Fields to use | Answer rule |
+|---|---|---|---|
+| What's currently showing / current ad / is anything overridden | Retrieve the currently displayed advertisement | product, source (camera-detected vs. agent-commanded), image or video, promo text | State whether the ad is live/camera-driven or an agent override, and which product it's for. |
+| What products/items can be advertised | Retrieve the catalog of advertisable products and associations | product names, associated items | Summarize the available products; don't invent products not in the result. |
+| Show/display/trigger an ad for a specific product (optionally with custom promo text) | Directly display a specific catalog item's ad | product name, promo text (optional) | Confirm which product was triggered and the promo text used, if any. |
+| Play/show a looping video ad for a product | Display a looping video ad | product name, display duration | Confirm which product's video ad was triggered. |
+| Pick the best ad given context (weather, demand, time of day, age group) | Resolve a shopping context and select a dynamic ad | weather, demand signal, age_mix, daypart, resolved product | Report which product was selected and why, based only on the returned resolution — don't guess beyond it. |
+| Clear/stop/remove the current override ad | Clear any agent-commanded override | — | Confirm the override was cleared; camera-driven ad selection resumes. |
+| What the service/tool contract supports | Describe the service's current contract | read tools, action tools | Use only to answer meta-questions about capabilities; never to answer a data question. |
+
+## Complex Questions
+
+For multi-step requests (e.g. "show the right ad for this cold, rainy
+evening"), prefer `select_dynamic_ad` over guessing a product yourself — pass
+through the context the user gave and let the service resolve it. State
+missing evidence instead of inventing a product or promo.
