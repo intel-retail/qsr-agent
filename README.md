@@ -110,6 +110,8 @@ Model files under `~/models` and the local venvs (`.venv/`) are left in place.
 | [Architecture](docs/architecture.md) | Ownership, trust boundaries, transports, and deployment |
 | [Autonomous decisions](docs/autonomy.md) | Events, skill selection, capabilities, and approval |
 | [Adding a service](docs/adding-a-service.md) | MCP server/client, Hermes registration, skills, actions, and tests |
+| [Operator-taught learning](docs/self-learning.md) | Hermes learns event responses from operators and writes `learned-*` skills |
+| [Make a service learnable](docs/self-learning-integration.md) | Events, context, action tool, and simulator a service needs for learning |
 
 ## Repository Map
 
@@ -119,6 +121,7 @@ Model files under `~/models` and the local venvs (`.venv/`) are left in place.
 | `qsr-skills/` | Hermes domain routing and interpretation procedures |
 | `agent-config/hermes/` | Local and remote Hermes configuration fragments |
 | `operator-ui/` | Web chat, connected services, and event decision approvals |
+| `learning/` | Simulated operator history, learning journal, and approved `learned-*` skills |
 | `scripts/setup.sh` | Idempotent local installation and validation |
 
 ## Current Scope

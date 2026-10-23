@@ -71,6 +71,33 @@
     .autonomy-panel header { margin:0 16px; padding:14px 2px 8px; border-bottom:2px solid var(--brand); display:flex; align-items:center; gap:10px; }
     .autonomy-panel .count { margin-left:auto; background:var(--panel); border:1px solid var(--line); border-radius:20px; padding:1px 8px; font-size:11px; color:var(--txt); }
     .autonomy-panel .weather-state { padding:8px 16px 4px; }
+    .event-link { display:flex; align-items:center; gap:8px; margin:0 18px 8px; padding:6px 10px; border:1px solid var(--brand); border-radius:8px; background:#e8f1fa; font-size:12px; }
+    .event-link[hidden] { display:none; }
+    .event-link .label { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .event-link button { border:0; background:transparent; cursor:pointer; font-size:14px; color:var(--muted); }
+    .learning-state { color:var(--muted); font-size:11px; padding:0 16px 6px; }
+    .learn-card { margin:0 14px 8px; padding:10px 12px; border-radius:8px; border:1px solid #ffb800; background:#fff8e6; font-size:12px; display:flex; align-items:center; gap:10px; }
+    .learn-card[hidden] { display:none; }
+    .learn-card .text { flex:1; min-width:0; line-height:1.35; }
+    .learn-card .text b { display:block; font-size:13px; }
+    .learn-card button, .learn-modal button { border:1px solid var(--brand); background:var(--brand); color:#fff; border-radius:6px; padding:5px 10px; cursor:pointer; font-size:12px; }
+    .learn-card button:disabled { opacity:.5; cursor:default; }
+    .learn-modal { position:fixed; inset:0; z-index:100; background:rgba(15,23,42,.45); display:flex; align-items:center; justify-content:center; }
+    .learn-modal[hidden] { display:none; }
+    .learn-dialog { width:min(820px, 94vw); max-height:86vh; display:flex; flex-direction:column; background:#fff; border-radius:10px; box-shadow:0 20px 50px rgba(0,0,0,.3); overflow:hidden; }
+    .learn-dialog header { padding:14px 18px; border-bottom:2px solid var(--brand); display:flex; align-items:center; gap:10px; }
+    .learn-dialog header h3 { margin:0; font-size:16px; color:var(--brand); }
+    .learn-dialog header .close { margin-left:auto; background:transparent; color:var(--muted); border:0; font-size:18px; }
+    .learn-body { padding:14px 18px; overflow-y:auto; font-size:13px; }
+    .learn-body .note { color:var(--muted); margin:0 0 10px; }
+    .learn-log { background:#0b1220; color:#d6e2f0; border-radius:8px; padding:10px 12px; font:12px/1.5 ui-monospace,Menlo,Consolas,monospace; white-space:pre-wrap; max-height:300px; overflow-y:auto; }
+    .learn-rule { display:grid; grid-template-columns:1fr 210px 130px; gap:10px; align-items:center; padding:8px 10px; border:1px solid var(--line); border-radius:8px; margin-bottom:6px; background:var(--panel); }
+    .learn-rule .then { font-weight:600; color:var(--brand-dark); }
+    .learn-rule .ev { color:var(--muted); font-size:11px; text-align:right; }
+    .learn-rule .tag { display:inline-block; margin-left:6px; padding:0 6px; border-radius:10px; font-size:10px; background:#16a34a; color:#fff; }
+    .learn-dialog footer { padding:12px 18px; border-top:1px solid var(--line); display:flex; gap:8px; justify-content:flex-end; }
+    .learn-dialog footer .reject { background:transparent; color:#b91c1c; border-color:#ef4444; }
+    .learn-dialog footer .secondary { background:transparent; color:var(--txt); border-color:var(--line); }
     @keyframes s { to { transform:rotate(360deg); } }
     @media (max-width:720px) {
       body { height:auto; }
@@ -115,6 +142,11 @@
 
     <div class="quick" id="quick"></div>
 
+    <div class="event-link" id="event-link" hidden>
+      <span class="label" id="event-link-label"></span>
+      <button type="button" id="event-link-dismiss" title="Not about this event" aria-label="Unlink event">✕</button>
+    </div>
+
     <form id="form">
       <input id="q" autocomplete="off" placeholder="Ask the store agent…" />
       <button class="send" id="send" type="submit">Send</button>
@@ -127,8 +159,22 @@
       <span class="count" id="approval-count">…</span>
     </header>
     <div class="weather-state" id="weather-state">Events: waiting</div>
+    <div class="learning-state" id="learning-state"></div>
+    <div class="learn-card" id="learn-card" hidden>
+      <div class="text" id="learn-card-text"></div>
+      <button type="button" id="learn-card-action"></button>
+    </div>
     <ul id="approvals"><li class="empty">Loading…</li></ul>
   </section>
+  </div>
+
+  <div class="learn-modal" id="learn-modal" hidden role="dialog" aria-modal="true" aria-labelledby="learn-title">
+    <div class="learn-dialog">
+      <header><h3 id="learn-title">Hermes skill learning</h3>
+        <button type="button" class="close" id="learn-close" aria-label="Close">&#10005;</button></header>
+      <div class="learn-body" id="learn-body"></div>
+      <footer id="learn-footer"></footer>
+    </div>
   </div>
 
   <div class="footer">&copy; 2026 Intel Corporation</div>
@@ -146,7 +192,194 @@
     const approvals = document.getElementById('approvals');
     const approvalCount = document.getElementById('approval-count');
     const weatherState = document.getElementById('weather-state');
+    const eventLink = document.getElementById('event-link');
+    const eventLinkLabel = document.getElementById('event-link-label');
+    const learningState = document.getElementById('learning-state');
+    const dismissedEvents = new Set();
+    let activeEvent = null;
     let lastAutonomySnapshot = '';
+
+    document.getElementById('event-link-dismiss').onclick = () => {
+      if (activeEvent) dismissedEvents.add(activeEvent.event_id);
+      renderEventLink();
+    };
+
+    function renderEventLink() {
+      const linked = activeEvent && !dismissedEvents.has(activeEvent.event_id);
+      eventLink.hidden = !linked;
+      if (!linked) return;
+      const minutes = Math.floor(activeEvent.age_seconds / 60);
+      eventLinkLabel.textContent = 'Responding to: ' + eventLabel(activeEvent.event_type) + ' (' +
+        compactEventInfo(activeEvent.event_type, activeEvent.data || {}, {}) + '), ' +
+        (minutes < 1 ? 'just now' : minutes + ' min ago');
+    }
+
+    async function loadLearning() {
+      try {
+        const res = await fetch('/learning/status');
+        const data = await res.json();
+        if (!data.ok) throw new Error('learning unavailable');
+        activeEvent = data.active_event;
+        renderEventLink();
+        const parts = ['Learning: ' + data.unlearnt_actions + ' operator actions to learn from'];
+        if (data.pending_skill_writes) parts.push(data.pending_skill_writes + ' skill change awaiting approval');
+        learningState.textContent = parts.join(' · ');
+        learning = data;
+        renderLearnCard();
+        const pending = (data.pending || [])[0];
+        if (pending && !reviewedPending.has(pending.id) && learnModal.hidden) {
+          reviewedPending.add(pending.id);
+          openLearnModal();
+        } else if (!learnModal.hidden) {
+          renderLearnModal();
+        }
+      } catch (err) {
+        learningState.textContent = '';
+      }
+    }
+
+    const learnCard = document.getElementById('learn-card');
+    const learnCardText = document.getElementById('learn-card-text');
+    const learnCardAction = document.getElementById('learn-card-action');
+    const learnModal = document.getElementById('learn-modal');
+    const learnBody = document.getElementById('learn-body');
+    const learnFooter = document.getElementById('learn-footer');
+    const reviewedPending = new Set();
+    let learning = null;
+    let learnMessage = '';
+
+    function renderLearnCard() {
+      const pending = (learning.pending || [])[0];
+      const ready = (learning.ready || [])[0];
+      const learner = learning.learner || {};
+      let title = '', detail = '', action = '';
+      if (pending) {
+        title = 'New skill ready for review';
+        detail = pending.skill + ' · ' + pending.rules.length + ' rules learnt from operator actions';
+        action = 'Review';
+      } else if (learner.running) {
+        title = 'Hermes is learning ' + learner.service + ' rules…';
+        detail = (learner.log || []).slice(-1)[0] || 'Analysing operator actions';
+        action = 'View';
+      } else if (ready) {
+        title = 'Hermes can learn from ' + ready.count + ' ' + ready.service + ' operator actions';
+        detail = learner.error ? 'Last run: ' + learner.error : 'Threshold ' + learning.threshold +
+          ' reached · learning takes about a minute';
+        action = 'Learn now';
+      }
+      learnCard.hidden = !title;
+      if (!title) return;
+      learnCardText.innerHTML = '';
+      const heading = document.createElement('b');
+      heading.textContent = title;
+      learnCardText.append(heading, document.createTextNode(detail));
+      learnCardAction.textContent = action;
+      learnCardAction.onclick = action === 'Learn now' ? () => startLearning(ready.service) : openLearnModal;
+    }
+
+    async function startLearning(service) {
+      learnCardAction.disabled = true;
+      learnMessage = '';
+      try {
+        const res = await fetch('/learning/run', {method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({service})});
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || 'could not start learning');
+        openLearnModal();
+      } catch (err) {
+        add('bot', 'Learning failed to start: ' + err.message, true);
+      } finally {
+        learnCardAction.disabled = false;
+        loadLearning();
+      }
+    }
+
+    function openLearnModal() {
+      learnModal.hidden = false;
+      renderLearnModal();
+    }
+
+    function closeLearnModal() {
+      learnModal.hidden = true;
+      learnMessage = '';
+    }
+
+    document.getElementById('learn-close').onclick = closeLearnModal;
+
+    function footerButton(label, className, onclick) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = label;
+      if (className) button.className = className;
+      button.onclick = onclick;
+      learnFooter.appendChild(button);
+      return button;
+    }
+
+    function renderLearnModal() {
+      if (!learning) return;
+      const pending = (learning.pending || [])[0];
+      const learner = learning.learner || {};
+      learnBody.innerHTML = '';
+      learnFooter.innerHTML = '';
+      if (learnMessage) {
+        addText(learnBody, 'note', learnMessage);
+        footerButton('Close', 'secondary', closeLearnModal);
+      } else if (pending) {
+        addText(learnBody, 'note', 'Hermes wrote ' + pending.skill + ' from recorded operator actions. Each rule was ' +
+          'checked against those records. Approving saves it with Hermes /skills approve; it is used from the next event, ' +
+          'and every action it proposes still needs your approval.');
+        pending.rules.forEach(rule => {
+          const row = document.createElement('div');
+          row.className = 'learn-rule';
+          const when = document.createElement('span');
+          when.textContent = 'When ' + rule.when;
+          if (rule.new) { const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = 'NEW'; when.appendChild(tag); }
+          const then = document.createElement('span');
+          then.className = 'then';
+          then.textContent = rule.then;
+          const ev = document.createElement('span');
+          ev.className = 'ev';
+          ev.textContent = 'taught ' + rule.taught + '× of ' + rule.matched + (rule.rejected ? ' · rejected ' + rule.rejected + '×' : '');
+          row.append(when, then, ev);
+          learnBody.appendChild(row);
+        });
+        if (pending.removed) addText(learnBody, 'note', pending.removed + ' earlier rule(s) are no longer supported and will be removed.');
+        footerButton('Later', 'secondary', closeLearnModal);
+        footerButton('Reject', 'reject', () => decideSkill(pending, 'reject'));
+        footerButton('Approve skill', '', () => decideSkill(pending, 'approve'));
+      } else if (learner.running || learner.log && learner.log.length) {
+        addText(learnBody, 'note', learner.running
+          ? 'Hermes is learning ' + learner.service + ' rules with the local model. This takes about a minute; event decisions may wait briefly.'
+          : (learner.error ? 'Learning stopped: ' + learner.error : 'Learning finished.'));
+        const log = document.createElement('div');
+        log.className = 'learn-log';
+        log.textContent = (learner.log || []).join('\n') || 'Starting…';
+        learnBody.appendChild(log);
+        log.scrollTop = log.scrollHeight;
+        footerButton(learner.running ? 'Hide' : 'Close', 'secondary', closeLearnModal);
+      } else {
+        addText(learnBody, 'note', 'Nothing to review right now.');
+        footerButton('Close', 'secondary', closeLearnModal);
+      }
+    }
+
+    async function decideSkill(pending, decision) {
+      learnFooter.querySelectorAll('button').forEach(button => { button.disabled = true; });
+      try {
+        const res = await fetch('/learning/pending/' + encodeURIComponent(pending.id) + '/' + decision,
+          {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || 'decision failed');
+        learnMessage = decision === 'approve'
+          ? pending.skill + ' is approved and active from the next event.'
+          : 'Skill change rejected. The operator actions stay available for the next learning run.';
+      } catch (err) {
+        learnMessage = 'Could not ' + decision + ' the skill: ' + err.message;
+      }
+      await loadLearning();
+      renderLearnModal();
+    }
 
     async function loadServers() {
       services.innerHTML = '<li class="empty">Loading…</li>';
@@ -192,11 +425,17 @@
     }
 
     async function decide(proposalId, decision) {
+      let reason = '';
+      if (decision === 'reject') {
+        const answer = window.prompt('Why reject? (optional — Hermes learns from this)', '');
+        if (answer === null) return;
+        reason = answer.trim().slice(0, 500);
+      }
       try {
         const res = await fetch('/autonomy/proposals/' + encodeURIComponent(proposalId) + '/' + decision, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: '{}'
+          body: JSON.stringify(reason ? { reason } : {})
         });
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || 'decision failed');
@@ -368,6 +607,14 @@
 
     function actionTitle(proposal) {
       if (proposal.tool === 'accuracy.request_remake') return 'Remake order ' + proposal.arguments.order_id;
+      if (proposal.tool === 'kiosk.update_kiosk_settings') {
+        const args = proposal.arguments || {};
+        const changes = [];
+        if (args.mode) changes.push(readable(args.mode) + ' mode');
+        if (typeof args.active_kiosks === 'number') changes.push(args.active_kiosks + ' kiosks open');
+        if (typeof args.upsell_enabled === 'boolean') changes.push('upsell ' + (args.upsell_enabled ? 'on' : 'off'));
+        return 'Kiosk settings: ' + changes.join(', ');
+      }
       if (proposal.tool === 'kiosk.change_menu_items' || proposal.tool === 'change_menu_items') {
         const changes = proposal.arguments.changes || [];
         const items = Object.values((proposal.evidence || {}).observations || {}).flatMap(context => (context.menu || {}).items || []);
@@ -404,6 +651,7 @@
       if (type === 'queue_count_changed') {
         if (typeof data.queue_count === 'number') facts.push('Queue ' + data.queue_count);
         if (typeof data.previous_queue_count === 'number') facts.push('from ' + data.previous_queue_count);
+        if (typeof data.estimated_wait_minutes === 'number') facts.push(data.estimated_wait_minutes + ' min wait');
         if (Array.isArray(data.temporarily_hidden_items) && data.temporarily_hidden_items.length) {
           facts.push('Restricted: ' + data.temporarily_hidden_items.map(readable).join(', '));
         }
@@ -465,11 +713,13 @@
       parent.appendChild(details);
     }
 
-    refresh.onclick = () => { loadServers(); loadStatus(true); loadAutonomy(); };
+    refresh.onclick = () => { loadServers(); loadStatus(true); loadAutonomy(); loadLearning(); };
     loadServers();
     loadAutonomy();
+    loadLearning();
     setInterval(() => loadStatus(false), 30000);
     setInterval(loadAutonomy, 5000);
+    setInterval(loadLearning, 5000);
 
     const SUGGESTIONS = [
       "List all suspicious-activity zones",
@@ -508,10 +758,11 @@
       const pending = add('bot', '');
       pending.innerHTML = '<span class="spin"></span> thinking…';
       try {
+        const linked = activeEvent && !dismissedEvents.has(activeEvent.event_id);
         const res = await fetch('/ask', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ question })
+          body: JSON.stringify(linked ? { question, event_id: activeEvent.event_id } : { question })
         });
         const data = await res.json();
         if (data.ok) {

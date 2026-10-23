@@ -31,7 +31,9 @@ production restaurant integrations.
 1. Follow [Complete setup](setup.md) to install and run the exact local stack.
 2. Read [Architecture](architecture.md) for ownership and trust boundaries.
 3. Read [Autonomous decisions](autonomy.md) for event-triggered actions.
-4. Follow [Adding a service](adding-a-service.md) to integrate another QSR
+4. Read [Operator-taught learning](self-learning.md) to let Hermes learn
+   event responses from operators.
+5. Follow [Adding a service](adding-a-service.md) to integrate another QSR
    domain or replace a simulation with an authoritative service.
 
 After prerequisites are installed, the normal path is:
@@ -58,6 +60,8 @@ Verify an existing installation at any time without changing it:
 | Validate MCP and agent Q&A | [Run and verify](setup.md#5-run-and-verify) |
 | Understand component ownership | [Responsibility boundaries](architecture.md#responsibility-boundaries) |
 | Extend event skills and capabilities | [Autonomous decisions](autonomy.md) |
+| Learn event responses from operators | [Operator-taught learning](self-learning.md) |
+| Make another service learnable | [Self-learning integration guide](self-learning-integration.md) |
 | Understand the event flow | [Autonomy event flow](architecture.md#autonomy-event-flow) |
 | Deploy remote MCP services | [Remote deployment](architecture.md#remote-deployment) |
 | Add a QSR domain | [Adding a QSR service](adding-a-service.md) |

@@ -6,3 +6,6 @@ models
 results
 tests/mcp-services/logs
 operator-ui/static/*.map
+learning/journal
+learning/runs
+learning/skills

@@ -39,7 +39,9 @@ gives Qwen the real MCP schemas directly and removes the deferred
 Event producers POST to the Operator UI `/autonomy/events` webhook. The UI
 queues each event durably, Hermes selects skills and MCP reads, and any proposed
 action waits for operator approval in the right-side Autonomy decisions panel.
-See [Autonomous decisions](autonomy.md).
+See [Autonomous decisions](autonomy.md). Operator responses to events are
+journaled and can be learnt into `learned-<service>` skills; see
+[Operator-taught learning](self-learning.md).
 
 ## Repository Layout
 
@@ -58,7 +60,14 @@ agent-config/hermes/
 qsr-skills/
   kiosk-operations/SKILL.md       Kiosk routing and interpretation
   order-accuracy/SKILL.md         Accuracy routing and interpretation
+autonomy/
+  learning.py                     Learning journal, rule verification, learned-skill format
+  learning_runner.py              Learner runs and Hermes skill approval (UI and CLI)
+learning/
+  simulated/                      Simulated operator history (deterministic)
+  skills/learned-<service>/       Approved learned skills
 scripts/setup.sh                   Local setup and verification
+scripts/learn.py                   Learning CLI (import, status, run, approve)
 docs/
   index.md                         Project entry point
   setup.md                         Complete local installation

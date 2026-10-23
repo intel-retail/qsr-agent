@@ -195,6 +195,9 @@ Model/provider settings come from the working user Hermes configuration.
 The runner does not apply `QSR_ADVISOR_MODEL`, `QSR_ADVISOR_BASE_URL`, or
 `QSR_ADVISOR_API_KEY` overrides to that configuration.
 
+Learning settings (`QSR_LEARN_THRESHOLD`, `QSR_LEARN_AUTO`, `QSR_LEARNING_DIR`,
+...) are listed in [Operator-taught learning](self-learning.md#learning-from-the-operator-ui).
+
 ## Extending The Catalog
 
 An extension's `register_autonomy(registry)` registers `Capability` objects in
