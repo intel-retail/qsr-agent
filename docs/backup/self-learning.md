@@ -290,6 +290,9 @@ against the event and live context itself and gives the model the combined
 settings of every matching rule. The model decides whether to act and writes
 the reason; matched settings it leaves out are added to the proposal (recorded
 as `learned_settings` in the evidence) when the owner validator accepts them.
+If the model proposes no action but a learned rule matches, the agent proposes
+the matched settings itself (the model's reasoning is kept as `model_summary`);
+the owner validator and operator approval still apply.
 
 ## Safety Rules
 
@@ -315,8 +318,9 @@ as `learned_settings` in the evidence) when the owner validator accepts them.
   type the intended instruction instead.
 - Chat `tool_calls` are read from service logs by time window; a concurrent
   approval in the same window can be attributed to the chat turn.
-- Each `/ask` is a one-shot Hermes turn, so a chat instruction must be explicit
-  (the kiosk skill treats direct settings instructions as approval).
+- Chat runs in one always-on Hermes conversation, but a chat instruction must
+  still be explicit (the kiosk skill treats direct settings instructions as
+  approval).
 
 ---
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Minimal operator chat UI backend for the QSR agent.
 
-Serves a single-page chat UI and forwards each operator question to the Hermes
-agent via `hermes -z`, reusing the exact path verified on the CLI. No web
-framework; event argument validation uses autonomy/requirements.txt.
+Serves a single-page chat UI and forwards operator questions to one always-on
+Hermes conversation on the local Hermes gateway, which this process supervises.
+No web framework; event argument validation uses autonomy/requirements.txt.
 
 Run:
     .venv/mcp/bin/python operator-ui/app.py
@@ -12,7 +12,9 @@ Environment:
     QSR_UI_PORT   bind port   (default 8600)
     HERMES_BIN    hermes path (default ~/.local/bin/hermes)
     HERMES_TIMEOUT  per-question seconds (default 300)
-    HERMES_REASONING reasoning effort per turn (default low)
+    QSR_RUN_HERMES_GATEWAY start and supervise `hermes gateway run` (default true)
+    QSR_HERMES_API_PORT local Hermes API server port (default 8642)
+    QSR_CHAT_IDLE_MINUTES start a fresh chat conversation after this idle time; 0 = never (default 30)
     QSR_AUTONOMY_DB persistent proposal database
     QSR_WARMUP    run one background warm-up turn at startup (default true)
     QSR_LEARNING_DIR learning journal and learned skills (default ./learning)
@@ -26,9 +28,8 @@ from __future__ import annotations
 
 import json
 import os
-import queue
 import re
-import signal
+import secrets
 import shutil
 import subprocess
 import sys
@@ -48,12 +49,14 @@ from autonomy.learning import (
     Journal, action_calls_since, chat_record, describe_rules, learning_dir, proposal_record, silent_record,
 )
 from autonomy import learning_runner
+from autonomy.hermes_gateway import (
+    GatewayError, GatewaySupervisor, HermesGateway, HermesSessions, wait_until_healthy,
+)
 
 HOST = os.environ.get("QSR_UI_HOST", "0.0.0.0")
 PORT = int(os.environ.get("QSR_UI_PORT", "8600"))
 HERMES_BIN = os.environ.get("HERMES_BIN", os.path.expanduser("~/.local/bin/hermes"))
 HERMES_TIMEOUT = float(os.environ.get("HERMES_TIMEOUT", "300"))
-HERMES_REASONING = os.environ.get("HERMES_REASONING", "low")
 HERMES_RESPONSE_STYLE = os.environ.get(
     "HERMES_RESPONSE_STYLE",
     "Only answer questions about this store's connected services. If the question is "
@@ -62,7 +65,6 @@ HERMES_RESPONSE_STYLE = os.environ.get(
     "connected services.\" Use the relevant tool before answering factual or numeric questions. "
     "Do not estimate missing values. Answer in one short sentence unless the user explicitly asks for detail.",
 )
-HERMES_IDLE_DONE_SECONDS = float(os.environ.get("HERMES_IDLE_DONE_SECONDS", "3"))
 # Reject oversized requests before reading the body or invoking Hermes.
 MAX_BODY_BYTES = int(os.environ.get("QSR_MAX_BODY_BYTES", "65536"))
 MAX_QUESTION_CHARS = int(os.environ.get("QSR_MAX_QUESTION_CHARS", "4000"))
@@ -72,6 +74,7 @@ WARMUP_PROMPT = os.environ.get("QSR_WARMUP_PROMPT", "Warm up. Reply with OK only
 WARMUP_DONE = threading.Event()
 if not WARMUP_ENABLED:
     WARMUP_DONE.set()
+RUN_GATEWAY = os.environ.get("QSR_RUN_HERMES_GATEWAY", "true").strip().lower() not in {"0", "false", "no"}
 
 _INDEX_PATH = Path(__file__).parent / "static" / "index.html"
 AUTONOMY = build_controller(_ROOT_PATH)
@@ -86,6 +89,16 @@ LEARNER_STATE: dict = {"running": False, "service": None, "log": [], "error": No
 LEARNER_LOCK = threading.Lock()
 FINALIZE_LOCK = threading.Lock()
 MAX_REASON_CHARS = 500
+SESSIONS = HermesSessions(learning_dir(_ROOT_PATH) / "hermes" / "sessions.json")
+OPERATOR_SESSION = "operator"
+# An idle chat starts a fresh conversation (Hermes memory carries over); 0 keeps it forever.
+CHAT_IDLE_SECONDS = float(os.environ.get("QSR_CHAT_IDLE_MINUTES", "30")) * 60
+# Turns in one Hermes session cannot overlap.
+CHAT_LOCK = threading.Lock()
+
+
+def operator_gateway() -> HermesGateway:
+    return HermesGateway.operator(HERMES_TIMEOUT)
 
 
 def in_scope(question: str, decision: dict | None) -> bool:
@@ -298,10 +311,6 @@ def _agent_env(hermes: str) -> dict:
     return env
 
 
-def _prepare_question(question: str) -> str:
-    return f"{question.rstrip()}\n\n{HERMES_RESPONSE_STYLE}"
-
-
 def _normalize_answer(answer: str) -> str:
     lines: list[str] = []
     previous_text: str | None = None
@@ -393,121 +402,50 @@ def check_status(force: bool = False) -> dict:
     return {"ok": True, "services": result}
 
 
-def ask_hermes(question: str) -> dict:
-    """Run one non-interactive Hermes turn and return its answer text."""
-    hermes = _resolve_hermes()
-    if not hermes:
-        return {"ok": False, "error": "hermes binary not found"}
-
-    env = _agent_env(hermes)
-
-    # Lower reasoning effort per invocation to cut latency on the local model;
-    # config.yaml sets the default but this keeps the UI fast even if that drifts.
-    cmd = [hermes, "--reasoning", HERMES_REASONING, "-z", _prepare_question(question)]
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            stdin=subprocess.DEVNULL,
-            env=env,
-            start_new_session=True,
-        )
-        try:
-            stdout, stderr = proc.communicate(timeout=HERMES_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            os.killpg(proc.pid, signal.SIGKILL)
-            proc.wait()
-            return {"ok": False, "error": f"Hermes timed out after {HERMES_TIMEOUT:.0f}s"}
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "error": f"Hermes timed out after {HERMES_TIMEOUT:.0f}s"}
-
-    answer = _normalize_answer(stdout or "")
-    if not answer and proc.returncode != 0:
-        return {"ok": False, "error": (stderr or "Hermes returned no output").strip()[:2000]}
-    return {"ok": True, "answer": answer or "(no answer)"}
-
-
 def stream_hermes(question: str):
-    """Yield answer text incrementally as hermes -z produces it (model streaming).
-
-    Requires model.streaming: true in Hermes config so oneshot flushes tokens as
-    they are generated. Falls back to a single final chunk otherwise.
-    """
-    hermes = _resolve_hermes()
-    if not hermes:
-        yield {"event": "error", "error": "hermes binary not found"}
-        return
-
-    env = _agent_env(hermes)
-    cmd = [hermes, "--reasoning", HERMES_REASONING, "-z", _prepare_question(question)]
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL,
-            env=env,
-            text=True,
-            bufsize=1,  # line-buffered so partial output reaches the browser
-            start_new_session=True,
-        )
-    except OSError as exc:
-        yield {"event": "error", "error": f"could not start hermes: {exc}"}
-        return
-
-    outbox: queue.Queue[dict] = queue.Queue()
-
-    def _pump_stdout() -> None:
-        assert proc.stdout is not None
-        try:
-            for line in proc.stdout:
-                outbox.put({"event": "delta", "text": line})
-        finally:
-            outbox.put({"event": "eof"})
-
-    threading.Thread(target=_pump_stdout, daemon=True).start()
+    """Run one turn in the always-on operator session, yielding answer text as it streams."""
     yield {"event": "start", "message": "Connecting to Hermes..."}
-    got_output = False
-    last_output = time.monotonic()
-    last_heartbeat = time.monotonic()
+    gateway = operator_gateway()
+    parts: list[str] = []
+    answer: str | None = None
+    if not CHAT_LOCK.acquire(timeout=HERMES_TIMEOUT):
+        yield {"event": "error", "error": "Hermes is still answering another question; try again shortly."}
+        return
     try:
-        while True:
-            try:
-                chunk = outbox.get(timeout=0.5)
-            except queue.Empty:
-                now = time.monotonic()
-                if got_output and now - last_output >= HERMES_IDLE_DONE_SECONDS:
-                    proc.terminate()
-                    break
-                if now - last_heartbeat >= 1.0:
-                    last_heartbeat = now
-                    yield {"event": "heartbeat", "message": "Waiting for Hermes..."}
-                if proc.poll() is not None:
-                    break
-                continue
-            if chunk.get("event") == "eof":
-                break
-            got_output = True
-            last_output = time.monotonic()
-            yield chunk
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=5)
-    except Exception as exc:  # noqa: BLE001 - surface any read/wait failure to the client
-        os.killpg(proc.pid, signal.SIGKILL)
-        proc.wait()
-        yield {"event": "error", "error": str(exc)[:2000]}
+        session_id = SESSIONS.get(OPERATOR_SESSION, gateway, "QSR operator chat", CHAT_IDLE_SECONDS)
+        for event in gateway.stream_chat(session_id, question, HERMES_RESPONSE_STYLE):
+            if event["event"] == "assistant.delta" and event.get("delta"):
+                parts.append(event["delta"])
+                yield {"event": "delta", "text": event["delta"]}
+            elif event["event"] == "assistant.completed":
+                answer = event.get("content") or ""
+                # Context compression continues the conversation under a new session id.
+                SESSIONS.set(OPERATOR_SESSION, event.get("session_id") or session_id)
+    except GatewayError as error:
+        yield {"event": "error", "error": str(error)[:2000]}
         return
+    finally:
+        CHAT_LOCK.release()
+    answer = _normalize_answer(answer if answer is not None else "".join(parts))
+    if answer and not parts:
+        yield {"event": "delta", "text": answer}
+    yield {"event": "done", "answer": answer}
 
-    if not got_output and proc.returncode not in (0, None):
-        yield {"event": "error", "error": "Hermes returned no output"}
-        return
-    yield {"event": "done"}
 
+def ask_hermes(question: str) -> dict:
+    """Run one always-on session turn and return its answer."""
+    for chunk in stream_hermes(question):
+        if chunk["event"] == "error":
+            return {"ok": False, "error": chunk["error"]}
+        if chunk["event"] == "done":
+            return {"ok": True, "answer": chunk["answer"] or "(no answer)"}
+    return {"ok": False, "error": "Hermes returned no answer"}
+
+
+def new_chat() -> None:
+    """Start a fresh operator conversation; Hermes memory carries over."""
+    with CHAT_LOCK:
+        SESSIONS.forget(OPERATOR_SESSION)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -552,7 +490,8 @@ class Handler(BaseHTTPRequestHandler):
         is_learning = self.path == "/learning/run" or re.fullmatch(
             r"/learning/pending/[0-9a-f]{8}/(approve|reject)", self.path
         )
-        if self.path not in ("/ask", "/ask/stream", "/autonomy/events") and not (is_autonomy_proposal or is_learning):
+        if (self.path not in ("/ask", "/ask/stream", "/autonomy/events", "/chat/new")
+                and not (is_autonomy_proposal or is_learning)):
             self._send(404, b'{"ok":false,"error":"not found"}', "application/json")
             return
         try:
@@ -589,6 +528,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             body = json.dumps({"ok": True, **result}).encode("utf-8")
             self._send(202, body, "application/json")
+            return
+
+        if self.path == "/chat/new":
+            new_chat()
+            self._send(200, b'{"ok":true}', "application/json")
             return
 
         if self.path == "/learning/run":
@@ -699,17 +643,15 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.wfile.write(b": stream-open\n\n")
             self.wfile.flush()
-            parts: list[str] = []
-            completed = False
+            answer = None
             for chunk in stream_hermes(question):
-                if chunk.get("event") == "delta":
-                    parts.append(chunk.get("text", ""))
-                completed = completed or chunk.get("event") == "done"
+                if chunk.get("event") == "done":
+                    answer = chunk["answer"]
                 payload = f"data: {json.dumps(chunk)}\n\n".encode("utf-8")
                 self.wfile.write(payload)
                 self.wfile.flush()
-            if after and completed:
-                after(_normalize_answer("".join(parts)))
+            if after and answer is not None:
+                after(answer)
         except (BrokenPipeError, ConnectionResetError):
             return  # operator navigated away mid-answer
 
@@ -719,18 +661,22 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def _warm_up() -> None:
-    """Fire one throwaway turn so OVMS compiles the model graph and Hermes
-    initializes before the first operator query. Retries until OVMS is ready."""
+    """Wait for the gateway, then fire one throwaway turn outside the operator conversation
+    so OVMS compiles the model graph before the first query. Retries until OVMS is ready."""
+    gateway = operator_gateway()
     try:
+        if not wait_until_healthy(gateway, 180):
+            print("[QSR UI] Hermes gateway did not come up for warm-up.", flush=True)
+            return
         for attempt in range(1, 6):
             start = time.monotonic()
-            result = ask_hermes(WARMUP_PROMPT)
-            elapsed = time.monotonic() - start
-            if result.get("ok"):
-                print(f"[QSR UI] Warm-up complete in {elapsed:.0f}s (attempt {attempt})", flush=True)
+            try:
+                gateway.complete(WARMUP_PROMPT)
+                print(f"[QSR UI] Warm-up complete in {time.monotonic() - start:.0f}s (attempt {attempt})", flush=True)
                 return
-            print(f"[QSR UI] Warm-up attempt {attempt} failed in {elapsed:.0f}s: "
-                  f"{str(result.get('error', ''))[:120]}", flush=True)
+            except GatewayError as error:
+                print(f"[QSR UI] Warm-up attempt {attempt} failed in {time.monotonic() - start:.0f}s: "
+                      f"{str(error)[:120]}", flush=True)
             time.sleep(10)
         print("[QSR UI] Warm-up gave up; the first query will pay the compile cost.", flush=True)
     finally:
@@ -740,6 +686,10 @@ def _warm_up() -> None:
 def main() -> None:
     if not _resolve_hermes():
         print(f"WARNING: hermes not found at {HERMES_BIN} or on PATH")
+    os.environ.setdefault("QSR_HERMES_API_KEY", secrets.token_urlsafe(32))
+    supervisor = GatewaySupervisor(_resolve_hermes())
+    if RUN_GATEWAY:
+        supervisor.start()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"Operator UI on http://{HOST}:{PORT}  (Ctrl-C to stop)")
     if WARMUP_ENABLED:
@@ -753,6 +703,7 @@ def main() -> None:
     finally:
         server.server_close()
         AUTONOMY.stop()
+        supervisor.stop()
 
 
 if __name__ == "__main__":

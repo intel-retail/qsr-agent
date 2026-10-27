@@ -53,6 +53,8 @@
     main { display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; }
     main header { margin:0 18px; padding:14px 2px 8px; border-bottom:2px solid var(--brand); display:flex; align-items:center; gap:10px; }
     main header .sub { color:var(--muted); font-size:12px; margin-left:auto; }
+    main header .new-chat { background:transparent; color:var(--muted); border:1px solid var(--line); border-radius:8px; padding:4px 8px; font-size:11px; cursor:pointer; }
+    main header .new-chat:hover { border-color:var(--me); color:var(--txt); }
     #chat { flex:1; overflow-y:auto; padding:18px; display:flex; flex-direction:column; gap:12px; }
     .msg { max-width:760px; padding:10px 14px; border-radius:12px; white-space:pre-wrap; line-height:1.45; font-size:14px; }
     .me { align-self:flex-end; background:var(--me); color:#fff; border-bottom-right-radius:3px; }
@@ -134,6 +136,7 @@
     <header>
       <h2 class="card-title">Operator Chat</h2>
       <span class="sub" id="status">ready</span>
+      <button type="button" class="new-chat" id="new-chat" title="Start a fresh conversation; Hermes memory is kept">New chat</button>
     </header>
 
     <div id="chat">
@@ -745,6 +748,20 @@
       chat.scrollTop = chat.scrollHeight;
       return el;
     }
+
+    // Hermes keeps one always-on conversation server-side; this starts a fresh one.
+    const greeting = chat.innerHTML;
+    document.getElementById('new-chat').addEventListener('click', async () => {
+      if (send.disabled) return;
+      try {
+        const res = await fetch('/chat/new', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        chat.innerHTML = greeting;
+      } catch (err) {
+        add('bot', 'Could not start a new chat: ' + err.message, true);
+      }
+      q.focus();
+    });
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();

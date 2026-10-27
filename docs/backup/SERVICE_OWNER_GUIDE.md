@@ -97,7 +97,7 @@ and missing dependencies fail startup instead of replacing another owner.
 
 To let Hermes learn your event responses from operators instead of writing the
 event skill by hand, register the read and action tools only and follow
-[Make a service learnable](../docs/self-learning-integration.md).
+[Make a service learnable](self-learning-integration.md).
 
 ## Owner Validation And Skills
 

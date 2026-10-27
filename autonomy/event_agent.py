@@ -264,7 +264,13 @@ class HermesEventAgent:
                 }
                 action = decision["action"]
                 if action is None:
-                    return PolicyEvaluation(False, decision=evidence)
+                    action = self._learned_action(event, selected, observations)
+                    if action is None:
+                        return PolicyEvaluation(False, decision=evidence)
+                    settings = {key: value for key, value in action["arguments"].items() if key != "reason"}
+                    summary = ("Operator-taught rule matched this event and context: "
+                               + json.dumps(settings, separators=(",", ":")))
+                    evidence.update(summary=summary, model_summary=decision["summary"], learned_settings=settings)
                 if not isinstance(action, dict) or set(action) != {"tool", "arguments"}:
                     raise ValueError("action requires tool and arguments")
                 name = self._resolve_tool(action["tool"], selected)
@@ -342,6 +348,26 @@ class HermesEventAgent:
             for tool, settings in matching_settings(rules, fields).items():
                 merged.setdefault(tool, {}).update(settings)
         return merged
+
+    def _learned_action(
+        self, event: dict[str, Any], selected: dict[str, str], observations: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Matched operator-taught settings as an action when the model proposed none."""
+        allowed = self._allowed(selected)
+        for name, settings in self._learned_matches(event, selected, observations).items():
+            if name not in allowed:
+                continue
+            arguments = dict(settings)
+            if "reason" in self.catalog.schema(name).get("properties", {}):
+                arguments.setdefault("reason", "Operator-taught rule matched this event and context.")
+            try:
+                self.catalog.validate_action(name, arguments, observations)
+            except StaleContextError:
+                pass  # the caller refreshes the snapshots and re-validates
+            except ValueError:
+                continue
+            return {"tool": name, "arguments": arguments}
+        return None
 
     def _resolve_tool(self, name: Any, selected: dict[str, str]) -> Any:
         # Models sometimes qualify tools with the skill name, e.g. "skill.service.tool".

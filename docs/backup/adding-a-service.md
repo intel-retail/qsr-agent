@@ -1,6 +1,6 @@
 # Adding a QSR Service
 
-[Repository overview](../README.md) | [Documentation guide](index.md) |
+[Repository overview](README.original.md) | [Documentation guide](index.md) |
 [Setup](setup.md) | [Architecture](architecture.md) |
 **Add a service**
 
@@ -182,7 +182,7 @@ curl -sS -X POST http://127.0.0.1:8600/autonomy/events \
 The request returns HTTP 202 once the event is queued. Results, including any
 proposal awaiting approval, appear in the right-side **Autonomy decisions**
 panel. Retry delivery failures with the same `event_id`; duplicates are ignored.
-The weather service in [`services/weather`](../services/weather/README.md)
+The weather service in [`services/weather`](weather-service-README.md)
 is a working producer. See [Autonomous decisions](autonomy.md) for the
 capabilities and skills Hermes needs to act on a new event type.
 

@@ -310,6 +310,28 @@ class LearnedSkillTests(unittest.TestCase):
         self.assertEqual(evaluation.proposal.arguments, {"upsell": False, "mode": "express", "reason": "queue 12"})
         self.assertEqual(evaluation.decision["learned_settings"], {"mode": "express", "upsell": False})
 
+    def test_matched_learned_rule_is_proposed_when_the_model_proposes_nothing(self):
+        rules = [{"when": [{"field": "event.queue_count", "op": "<=", "value": 3}],
+                  "propose": {"tool": "kiosk.settings", "set": {"mode": "standard", "upsell": True}}}]
+        skill = LEARNED_SKILL.replace(
+            "(taught 9x).\n", "(taught 9x).\n\n```json\n" + json.dumps(rules) + "\n```\n")
+        (self.skills / "learned-kiosk" / "SKILL.md").write_text(skill)
+        register_learned_skills(self.catalog, self.skills)
+        read = {"skills": [], "reads": [{"tool": "kiosk.context", "arguments": {}}]}
+        agent = HermesEventAgent(ScriptedHermes(read, {"summary": "Queue is short", "action": None}), self.catalog)
+        evaluation = agent.evaluate_event(
+            {"event_id": "q-3", "event_type": "queue_count_changed", "data": {"queue_count": 2}}, False)
+        self.assertEqual(evaluation.proposal.tool, "kiosk.settings")
+        self.assertEqual(evaluation.proposal.arguments["mode"], "standard")
+        self.assertIs(evaluation.proposal.arguments["upsell"], True)
+        self.assertEqual(evaluation.decision["model_summary"], "Queue is short")
+        self.assertEqual(evaluation.decision["learned_settings"], {"mode": "standard", "upsell": True})
+        # No matching rule keeps the model's no-action decision.
+        agent = HermesEventAgent(ScriptedHermes(read, {"summary": "Busy", "action": None}), self.catalog)
+        evaluation = agent.evaluate_event(
+            {"event_id": "q-4", "event_type": "queue_count_changed", "data": {"queue_count": 6}}, False)
+        self.assertIsNone(evaluation.proposal)
+
 
 class KioskSettingsValidatorTests(unittest.TestCase):
     def observations(self, **operations):

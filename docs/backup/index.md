@@ -1,6 +1,6 @@
 # QSR Store Agent
 
-[Repository overview](../README.md) | **Documentation guide** |
+[Repository overview](README.original.md) | **Documentation guide** |
 [Setup](setup.md) | [Architecture](architecture.md) |
 [Add a service](adding-a-service.md)
 
@@ -68,4 +68,4 @@ Verify an existing installation at any time without changing it:
 
 ---
 
-[Repository overview](../README.md) | [Next: Complete setup](setup.md)
+[Repository overview](README.original.md) | [Next: Complete setup](setup.md)

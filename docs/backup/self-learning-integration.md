@@ -1,7 +1,7 @@
 # Make a Service Learnable: Quick Guide
 
 [Operator-taught learning](self-learning.md) | [Adding a service](adding-a-service.md) |
-[Service owner guide](../autonomy/SERVICE_OWNER_GUIDE.md)
+[Service owner guide](SERVICE_OWNER_GUIDE.md)
 
 Hermes learns **what operators do after your service's events** and proposes it
 next time. You do not write the rules: you expose events, context, and one
@@ -80,7 +80,7 @@ except `reason`.
 Built-in services: add to `register_defaults()` in
 `autonomy/service_capabilities.py`. External services: an extension module with
 `register_autonomy(registry)` loaded via `QSR_AUTONOMY_MODULES` (see the
-[service owner guide](../autonomy/SERVICE_OWNER_GUIDE.md#extension-module)).
+[service owner guide](SERVICE_OWNER_GUIDE.md#extension-module)).
 Remote services served over Streamable HTTP (for example the EdgeMart cafe,
 table, and footfall services) use `HttpMcpClient(url)` from `autonomy.mcp`
 instead of `StdioMcpClient`, as the weather service does in

@@ -132,7 +132,7 @@ services:
       # regenerated each start, so it is intentionally not a volume (a stale empty
       # volume would shadow the binary).
       - autonomy-state:/home/qsr/.local/state/qsr-agent
-      # Learning journal and approved learned-* skills; seeded from the image's learning/.
+      # Learning journal, approved learned-* skills and Hermes memory; seeded from the image's learning/.
       - learning:/opt/qsr/learning
     extra_hosts:
       - "host.docker.internal:host-gateway"
