@@ -5,7 +5,7 @@
 ### New
 
 - Operator chat with live answers from connected store services, using the
-  local Qwen3-30B-A3B INT4 model served by the OpenVINO™ Model Server on an
+  local Qwen3 INT4 model (set by `MODEL_ID`) served by the OpenVINO™ Model Server on an
   Intel® GPU.
 - Event-driven recommendations with operator approval for any store event
   type.

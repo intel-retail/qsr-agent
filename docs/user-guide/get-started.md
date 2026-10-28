@@ -24,8 +24,8 @@ cd qsr-agent
 make download-models
 ```
 
-This downloads `OpenVINO/Qwen3-30B-A3B-Instruct-2507-int4-ov` (about 16 GB)
-into `./models`. The download is skipped if the model is already present.
+This downloads the model set by `MODEL_ID` in `.env.example` (default
+`OpenVINO/Qwen3-8B-int4-ov`, about 5 GB) into `./models`. The download is skipped if the model is already present.
 
 ## Step 3: Start the Agent
 

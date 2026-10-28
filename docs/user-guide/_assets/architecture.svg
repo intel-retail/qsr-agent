@@ -31,7 +31,7 @@
 
   <rect x="490" y="235" width="180" height="95" rx="8" fill="#0068b5" stroke="#0068b5"/>
   <text x="580" y="262" text-anchor="middle" font-weight="600" fill="#ffffff">OpenVINO™ Model Server</text>
-  <text x="580" y="282" text-anchor="middle" fill="#ffffff">Qwen3-30B-A3B (INT4)</text>
+  <text x="580" y="282" text-anchor="middle" fill="#ffffff">Qwen3 (INT4)</text>
   <text x="580" y="310" text-anchor="middle" font-weight="600" fill="#ffffff">Intel® GPU</text>
 
   <rect x="260" y="250" width="180" height="60" rx="8" fill="#ffffff" stroke="#0068b5"/>

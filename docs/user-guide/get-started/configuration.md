@@ -15,7 +15,7 @@ so changes made directly to `.env` are overwritten.
 | Variable | Default | Description |
 |---|---|---|
 | `MODEL_ROOT` | `./models` | Host directory that holds downloaded models |
-| `MODEL_ID` | `OpenVINO/Qwen3-30B-A3B-Instruct-2507-int4-ov` | Model served by the OpenVINO™ Model Server |
+| `MODEL_ID` | `OpenVINO/Qwen3-8B-int4-ov` | Model served by the OpenVINO™ Model Server. Use an OpenVINO™ model with tool-calling support, for example `OpenVINO/Qwen3-30B-A3B-Instruct-2507-int4-ov`. After changing it, run `make download-models` and `make up` |
 | `QSR_UI_HOST` | `0.0.0.0` | Interface the operator UI listens on. Use `127.0.0.1` for local-only access |
 | `QSR_UI_PORT` | `8600` | Operator UI port |
 | `OVMS_PORT` | `4444` | Host port for the model server API (loopback only) |
@@ -79,13 +79,15 @@ mcp_servers:
   the host to `QSR_EXTRA_NO_PROXY`.
 - **Disable a service:** set `enabled: false`.
 
-The preconfigured entries are:
+The preconfigured entries read their URLs from `.env.example`. Leave
+`QSR_SAD_MCP_URL` or `QSR_LP_MCP_URL` empty to skip that service:
 
 | Service | Purpose | Setting |
 |---|---|---|
 | `weather` | Store-location weather | `QSR_WEATHER_MCP_URL` |
-| `suspicious-activity` | Kitchen food-safety events | `url` in the YAML file |
-| `digital-signage` | In-store advertising | `url` in the YAML file |
+| `suspicious-activity` | Kitchen food-safety events | `QSR_SAD_MCP_URL` |
+| `loss-prevention` | Self-checkout loss events | `QSR_LP_MCP_URL` |
+| `digital-signage` | In-store advertising | `QSR_DIGITAL_SIGNAGE_MCP_URL` |
 | `edgemart-sim-service` | Café-day orders, customers, and queue | `EDGEMART_SIM_MCP_URL` |
 | `edgemart-table-sim-service` | Table occupancy and cleaning | `EDGEMART_TABLE_SIM_MCP_URL` |
 | `edgemart-footfall-sim-service` | Zone footfall and busy hours | `EDGEMART_FOOTFALL_SIM_MCP_URL` |
