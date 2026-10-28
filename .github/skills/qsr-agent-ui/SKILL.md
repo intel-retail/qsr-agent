@@ -32,7 +32,7 @@ are in `docs/operator-ui.md`. Deviations from the reference skill (keep them):
 2. New screen/layout or changed structure: update the draw.io wireframe in
    `operator-ui/wireframes/` and get user approval **before** building. Small
    fixes inside existing panels do not need one.
-3. Reuse `src/components/ui/*` (add shadcn pieces with `npx shadcn add <name>`);
+3. Reuse `src/components/ui/*` (add shadcn pieces with `npx shadcn@latest add <name>`, run via npx; it is not a project dependency);
    keep display wording in `src/lib/format.ts`; keep HTTP in `src/api/` only.
 4. Use design tokens (`references/design-and-a11y.md`); no hard-coded colours.
 5. Add tests next to the code. Then run, in `operator-ui/frontend`:
