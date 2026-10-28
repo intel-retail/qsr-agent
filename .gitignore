@@ -14,3 +14,6 @@ learning/journal/
 learning/runs/
 learning/skills/
 learning/hermes/
+operator-ui/dist/
+operator-ui/frontend/node_modules/
+operator-ui/frontend/*.tsbuildinfo
