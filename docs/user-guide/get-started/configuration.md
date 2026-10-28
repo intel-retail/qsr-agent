@@ -15,7 +15,7 @@ so changes made directly to `.env` are overwritten.
 | Variable | Default | Description |
 |---|---|---|
 | `MODEL_ROOT` | `./models` | Host directory that holds downloaded models |
-| `MODEL_ID` | `OpenVINO/Qwen3-8B-int4-ov` | Model served by the OpenVINO™ Model Server. Use an OpenVINO™ model with tool-calling support, for example `OpenVINO/Qwen3-30B-A3B-Instruct-2507-int4-ov`. After changing it, run `make download-models` and `make up` |
+| `MODEL_ID` | `OpenVINO/Qwen3-30B-A3B-Instruct-2507-int4-ov` | Model served by the OpenVINO™ Model Server. Use an OpenVINO™ model with tool-calling support, for example `OpenVINO/Qwen3-8B-int4-ov`. After changing it, run `make download-models` and `make up` |
 | `QSR_UI_HOST` | `0.0.0.0` | Interface the operator UI listens on. Use `127.0.0.1` for local-only access |
 | `QSR_UI_PORT` | `8600` | Operator UI port |
 | `OVMS_PORT` | `4444` | Host port for the model server API (loopback only) |

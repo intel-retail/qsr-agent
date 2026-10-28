@@ -6,8 +6,8 @@
 |---|---|
 | Processor | Intel® Core™ Ultra, Intel® Core™, or Intel® Xeon® processor (x86-64) |
 | GPU | Intel® GPU (integrated or Intel® Arc™ discrete) exposed at `/dev/dri/renderD*` |
-| GPU memory | Enough to hold the INT4 model (about 5 GB for the default Qwen3-8B, about 16 GB for Qwen3-30B-A3B) plus a 4 GB KV cache |
-| Disk | About 30 GB free: up to 16 GB for the model, the rest for container images and data |
+| Memory | At least 64 GB for mixture-of-experts (MoE) models such as Qwen3-30B-A3B (the default); check the OpenVINO™ defaults and the model card for the model you choose. At least 32 GB for Qwen3-8B or a similar dense model. Integrated GPUs share this system memory for the model weights and the 4 GB KV cache |
+| Disk | About 30 GB free: the INT4 model files (about 5 GB for Qwen3-8B, about 16 GB for Qwen3-30B-A3B), plus container images and data |
 
 ## Software
 

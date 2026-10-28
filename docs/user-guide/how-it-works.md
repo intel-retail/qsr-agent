@@ -10,8 +10,8 @@
 | Agent runtime (Hermes) | Understands the request, picks the relevant store skills, calls store services, and composes the answer. Keeps operator preferences in memory. |
 | OpenVINO™ Model Server | Serves the Qwen3 INT4 language model set by `MODEL_ID` on the Intel® GPU through an OpenAI-compatible API. |
 | Skills | Short procedures, one per store domain, that tell the agent which service and fields answer which question. |
-| Store services (MCP) | Own the store data and actions. Each service validates its own actions and enforces its own policy. |
-| Weather service | Reports store-location weather and sends an event when conditions change. |
+| Learner | Turns recorded operator actions into a learned skill per service. Each rule is checked against the records, and an operator approves the skill. |
+| Store services (MCP) | Own the store data and actions, and send the store events, for example kiosk queue changes or weather changes. Each service validates its own actions and enforces its own policy. Services run on their own hosts or share one; the agent and its model run on a separate machine. |
 
 The agent never holds store data itself. It reads data from the services at
 the moment of the question, so answers reflect the current state of the store.

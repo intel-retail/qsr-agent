@@ -26,7 +26,7 @@ store data, conversations, and decisions never leave the premises.
 ## Why Run It on Intel Hardware
 
 - **Local, private inference.** A Qwen3 INT4 model (set by `MODEL_ID`, default
-  Qwen3-8B) is served by the OpenVINO™ Model Server on the store's
+  Qwen3-30B-A3B) is served by the OpenVINO™ Model Server on the store's
   Intel® GPU. No cloud dependency or per-request cost.
 - **Optimized with OpenVINO™.** The model is pre-converted and INT4-compressed
   for Intel GPUs. Prefix caching reuses the shared prompt between requests to

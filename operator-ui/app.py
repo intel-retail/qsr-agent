@@ -62,8 +62,13 @@ HERMES_RESPONSE_STYLE = os.environ.get(
     "Only answer questions about this store's connected services. If the question is "
     "unrelated to those services (for example general knowledge, trivia, math, or coding), "
     "do not answer it and reply exactly: \"I can only help with questions about this store's "
-    "connected services.\" Use the relevant tool before answering factual or numeric questions. "
-    "Do not estimate missing values. Answer in one short sentence unless the user explicitly asks for detail.",
+    "connected services.\" Questions about this store's staff, shifts, or preferences the operator "
+    "told you to remember are in scope; answer them from memory, or say you do not know. "
+    "Use the relevant tool before answering factual or numeric questions. "
+    "Do not estimate missing values. Answer in one short sentence unless the user explicitly asks for detail. "
+    # Qwen3 (hermes3 parser) otherwise often writes memory calls as untagged JSON reply text.
+    "Tool calls must always be emitted inside <tool_call></tool_call> tags, never as reply text. When the user asks "
+    "you to remember something, call the memory tool before replying, and never say it is saved unless that call succeeded.",
 )
 # Reject oversized requests before reading the body or invoking Hermes.
 MAX_BODY_BYTES = int(os.environ.get("QSR_MAX_BODY_BYTES", "65536"))
