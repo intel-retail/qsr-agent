@@ -1,8 +1,10 @@
-# Release Notes
+# Release Notes: QSR Store Agent
 
-## Current Release
+## Version 2026.3.0
 
-### New
+**Release Date**: TBD
+
+**New**:
 
 - Operator chat with live answers from connected store services, using the
   local Qwen3 INT4 model (set by `MODEL_ID`) served by the OpenVINO™ Model Server on an
@@ -18,7 +20,7 @@
 - Single-command deployment with Docker Compose, using a pre-built image or a
   local build.
 
-### Known Limitations
+**Known Limitations**:
 
 - The bundled kiosk, order-accuracy, and weather data are simulated.
 - The operator UI has no built-in authentication. Restrict network access in

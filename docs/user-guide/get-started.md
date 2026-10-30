@@ -6,10 +6,10 @@ Agent.
 ## Prerequisites
 
 - A Linux system with an Intel® GPU that meets the
-  [System Requirements](get-started/system-requirements.md).
+  [System Requirements](./get-started/system-requirements.md).
 - Docker Engine with the Compose plugin, Git, `make`, and Python 3.
-- Network access to GitHub, Docker Hub, and Hugging Face. Behind a proxy, see
-  [Configuration](get-started/configuration.md#proxy).
+- Network access to GitHub, Docker Hub, and Hugging Face. If you are behind a proxy, see
+  [Configuration](./get-started/configuration.md#proxy).
 
 ## Step 1: Get the Code
 
@@ -37,7 +37,7 @@ make up
 agent image and starts three containers:
 
 | Container | Role |
-|---|---|
+| --- | --- |
 | `ovms` | OpenVINO™ Model Server running the language model on the Intel® GPU |
 | `qsr-agent` | Operator UI and agent runtime |
 | `weather` | Weather service (simulated by default) |
@@ -73,7 +73,7 @@ make weather CONDITION=rain TEMP=12
 The event appears in the **Autonomy Decisions** panel, and the agent evaluates
 it. If the
 agent proposes a change, such as adding hot drinks to the menu, select
-**Approve** or **Reject**. See the [Operator Guide](operator-guide.md) for more.
+**Approve** or **Reject**. See the [Operator Guide](./operator-guide.md#review-event-decisions) for more.
 
 ## Stop the Agent
 
@@ -86,6 +86,17 @@ restored on the next `make up`.
 
 ## Next Steps
 
-- Connect your store services: [Configuration](get-started/configuration.md).
-- Understand the system: [How It Works](how-it-works.md).
-- Build the images yourself: [Build from Source](get-started/build-from-source.md).
+- Connect your store services: [Configuration](./get-started/configuration.md#connect-store-services).
+- Understand the system: [How It Works](./how-it-works.md).
+- Familiarise yourself with the [Operator Guide](./operator-guide.md).
+
+<!--hide_directive
+:::{toctree}
+:hidden:
+
+./get-started/system-requirements.md
+./get-started/configuration.md
+./get-started/build-from-source.md
+
+:::
+hide_directive-->
