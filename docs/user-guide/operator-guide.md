@@ -3,7 +3,7 @@
 Open the operator UI at `http://<host>:8600`. The screen has four areas:
 
 | Area | Use it to |
-|---|---|
+| --- | --- |
 | **Connected apps** | See which store services the agent can reach and how many tools each one offers |
 | **Operator Chat** | Ask questions and give instructions |
 | **Autonomy Decisions** | Review events, read the agent's reasoning, and approve or reject proposals |
@@ -36,7 +36,7 @@ When a store event arrives, it appears in **Autonomy Decisions** with one of
 these states:
 
 | State | Meaning |
-|---|---|
+| --- | --- |
 | Queued / Processing | The agent is evaluating the event |
 | Pending | The agent proposes an action and is waiting for you |
 | No action | The agent decided no change is needed and explains why |
@@ -68,7 +68,7 @@ make queue COUNT=12 WAIT=9
 ```
 
 Any store system can send its own events. See the
-[API Reference](api-reference.md#post-autonomyevents).
+[API Reference](./api-reference.md#post-autonomyevents).
 
 ## Teach the Agent
 
