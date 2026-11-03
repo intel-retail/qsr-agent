@@ -58,10 +58,46 @@ Issues found and fixed:
 | Dirty-table count reported as tables; busy-hours passed invalid dates | Table and footfall skills corrected |
 | A large table answer exhausted the model context and chat hung | `make restart` recovers; documented in Troubleshooting |
 
-Not covered in this run: live kiosk queue events and live order-accuracy events with
-learning from real records, because the Order Accuracy MCP services stopped
-answering, and the kiosk queue source was fixed at one value. The earlier
-[Remote-Host Run](#remote-host-run-2026-11-03) covers both.
+### Kiosk Queue Events from a Live Video Feed
+
+The remote kiosk's queue count stayed at 14, so no queue events arrived. Its
+smart-kiosk-assistant stack (kiosk-core, queue-service, with an RTSP stream of
+the project's own queue clip) was run on the agent host as a separate service,
+with the agent's `QSR_KIOSK_MCP_URL` pointing at it. The test video alternates a
+short queue (2 people, cropped from the clip) for 3 minutes, the full queue
+(about 8 people) for 6 minutes, and the short queue for 6 minutes.
+
+Kiosk problems found and fixed (smart-kiosk-assistant):
+
+| Issue | Fix |
+|---|---|
+| Any change of one person was forwarded. The live count jitters 2-5 on a two-person queue and 7-9 on a long one: 46 events in 64 minutes, each a model run and an operator review | Queue depth is the median of the last 3 polls; an event needs a change of 3 or more (`QUEUE_MIN_DELTA`), at most every 2 minutes. Same 64 minutes: 17 events, each a real change or a confirmation |
+| Only changes were sent, so "queue still short" (the back-to-normal rule) or "queue still long" never reached the agent | One confirmation 5 minutes after each change (`QUEUE_CONFIRM_SECONDS`) |
+| Every kiosk-core restart sent an event with no previous count | Change detection resumes from the last logged sample |
+| When the RTSP server closed the connection, queue-service logged a warning and stopped processing frames, but kept serving the last count as current | queue-service reconnects when no frame arrives for 30 s (`stall_timeout_seconds`); kiosk-core ignores readings older than 60 s and reports the queue as unavailable |
+| `KIOSK_CORE_QSR_MCP_QUEUE_POLL_SECONDS` was documented but not passed to the container | Added to `docker-compose.yml` |
+
+Self-learning from the live queue events (learned kiosk skill from the sample
+data removed first). A test operator answered each event through the operator
+UI: long queue → "switch the kiosks to express mode and turn upsell off" in chat
+while the event was shown; queue cleared → "back to standard mode and upsell
+on"; otherwise no change.
+
+| Step | Result |
+|---|---|
+| Events before learning | Agent (base skill) proposed no change for every queue event; operator taught 5 times in chat, each executed on the kiosk and journaled as `instruction` with `kiosk.update_kiosk_settings` |
+| `make learn ARGS="run --service kiosk"` (3 min 40 s) | `queue_count >= 8` and `kiosk_mode == standard` → `mode: express`, `upsell_enabled: false` (taught 3 of 5); `queue_count <= 3` and `kiosk_mode == express` → `mode: standard`, `upsell_enabled: true` (taught 2 of 2). Approved |
+| Next long queue (8, previous 2) | Proposal `update_kiosk_settings {mode: express, upsell_enabled: false}` citing the learned rule. Approved, executed on the kiosk |
+| Next drop (2, previous 3) | Proposal `update_kiosk_settings {mode: standard, upsell_enabled: true}`. Approved, executed |
+
+The RTSP streamer image could not be built (GitHub release downloads returned
+504 through every proxy node), so the stream was published with the same
+MediaMTX version and ffmpeg arguments the streamer uses.
+
+Not covered in this run: live order-accuracy events and learning from real
+order-accuracy records, because the Order Accuracy MCP services stopped
+answering. The earlier [Remote-Host Run](#remote-host-run-2026-11-03) covers
+them.
 
 ## Remote-Host Run (2026-11-03)
 

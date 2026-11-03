@@ -149,8 +149,12 @@ start or restart the service with `docker compose up -d <service>`:
 `QSR_AUTONOMY_STORE_ID` must be `qsr-001`, the agent's store ID, or the agent
 rejects the events. The suggested event types keep the
 agent from spending a model call on every validated order or on its own board
-changes coming back as events. The kiosk sends a queue event when the count
-from its queue service changes (polled every 30 seconds).
+changes coming back as events. The kiosk polls its queue service every 30
+seconds and sends a queue event when the queue depth (the median of the last
+three polls) moves by 3 people or more, at most every 2 minutes, plus one
+confirmation 5 minutes after each change. Tune these with the
+`KIOSK_CORE_QSR_AUTONOMY_QUEUE_*` settings described in the kiosk's
+`docs/qsr-mcp.md`.
 
 ### Step 2: Configure the Agent
 
