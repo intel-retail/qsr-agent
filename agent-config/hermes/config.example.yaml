@@ -50,3 +50,17 @@ tools:
 skills:
   external_dirs:
     - /absolute/path/to/qsr-agentic-svc/qsr-skills
+
+# Action gate: MCP tools that change live state (select/trigger/clear ads, mark tables, inject
+# events) run only when the operator's message is an explicit command, never for a question such
+# as "would a carrot ad be a good idea?". Enforced in code by hooks/action_gate.py, because the
+# local model does not reliably follow a prompt rule. pre_tool_call matchers must match the whole
+# tool name (mcp__<server>__<tool>); fail_closed blocks MCP tools if the hook cannot run.
+hooks:
+  pre_llm_call:
+    - command: python3 /absolute/path/to/qsr-agentic-svc/agent-config/hermes/hooks/action_gate.py
+  pre_tool_call:
+    - matcher: "mcp__.*"
+      command: python3 /absolute/path/to/qsr-agentic-svc/agent-config/hermes/hooks/action_gate.py
+      fail_closed: true
+hooks_auto_accept: true

@@ -25,6 +25,12 @@ class InputGuardrailUnitTests(unittest.TestCase):
             self.assertIn(term, terms)
         self.assertIn("accuracy", descriptions.lower())
 
+    def test_short_domain_word_ad_is_in_scope_without_classifier(self):
+        terms, _ = extract_scope_terms(SKILLS_DIR)
+        gate = InputGuardrail(terms, lambda question: False)
+        self.assertTrue(gate.is_allowed("Clear the override ad now."))
+        self.assertFalse(gate.is_allowed("What is the capital of India?"))
+
     def test_keyword_match_skips_classifier(self):
         calls = []
         gate = InputGuardrail({"queue", "menu"}, lambda question: calls.append(question) or False)

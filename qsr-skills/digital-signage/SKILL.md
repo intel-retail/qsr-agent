@@ -5,7 +5,7 @@ version: 1.0.0
 platforms: [linux]
 metadata:
   hermes:
-    tags: [QSR, Digital-Signage, Advertising, Advertisement, Video, Video-Ad, Promo, Promotion, Retail-Media]
+    tags: [QSR, Digital-Signage, Ad, Advertising, Advertisement, Video, Video-Ad, Promo, Promotion, Retail-Media]
 ---
 
 # Digital Signage
@@ -47,7 +47,7 @@ as evidence for live ad state.
 | User intent or question | Required capability | Fields to use | Answer rule |
 |---|---|---|---|
 | What's currently showing / current ad / is anything overridden | Retrieve the currently displayed advertisement | product, source (camera-detected vs. agent-commanded), image or video, promo text | State whether the ad is live/camera-driven or an agent override, and which product it's for. |
-| What products/items can be advertised | Retrieve the catalog of advertisable products and associations | product names, associated items | Summarize the available products; don't invent products not in the result. |
+| What products/items can be advertised | Retrieve the catalog of advertisable products and associations (`get_catalog`; `list_prompts`/`list_resources` are protocol metadata, not the ad catalog) | product names, associated items | Summarize the available products; don't invent products not in the result. |
 | Show/display/trigger an ad for a specific product (optionally with custom promo text) | Directly display a specific catalog item's ad | product name, promo text (optional) | Confirm which product was triggered and the promo text used, if any. |
 | Play/show a looping video ad for a product | Display a looping video ad | product name, display duration | Confirm which product's video ad was triggered. |
 | Pick the best ad given context (weather, demand, time of day, age group) | Resolve a shopping context and select a dynamic ad | weather, demand signal, age_mix, daypart, resolved product | Report which product was selected and why, based only on the returned resolution — don't guess beyond it. |

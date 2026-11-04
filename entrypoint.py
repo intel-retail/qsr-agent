@@ -139,9 +139,24 @@ def trust_remote_mcp_certs(servers: dict[str, Any]) -> None:
               "falling back to the system CA bundle only.", flush=True)
 
 
+def _drop_action_gate_hooks(config: dict[str, Any]) -> None:
+    """The fragment reinstalls them; a stale entry from a moved checkout would fail closed forever."""
+    hooks = config.get("hooks")
+    if not isinstance(hooks, dict):
+        return
+    for event, entries in list(hooks.items()):
+        if isinstance(entries, list):
+            kept = [e for e in entries if not (isinstance(e, dict) and "action_gate.py" in str(e.get("command", "")))]
+            if kept:
+                hooks[event] = kept
+            else:
+                del hooks[event]
+
+
 def configure_hermes() -> None:
     HERMES_CONFIG.parent.mkdir(parents=True, exist_ok=True)
     config = _load_yaml(HERMES_CONFIG) if HERMES_CONFIG.exists() else {}
+    _drop_action_gate_hooks(config)
     for fragment in (
         ROOT / "agent-config/hermes/config.example.yaml",
         ROOT / "agent-config/hermes/remote-mcp.example.yaml",

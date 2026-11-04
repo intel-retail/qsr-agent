@@ -11,3 +11,4 @@ learning/skills
 learning/hermes
 operator-ui/frontend/node_modules
 operator-ui/dist
+.harness

@@ -54,6 +54,26 @@ services:
     networks:
       - qsr
 
+  # Inference Router: the single OpenAI-compatible endpoint Hermes talks to, in
+  # front of OVMS (same router agent-harness-install deploys).
+  inference-router:
+    image: ${IR_IMAGE:-intel/inference-router:2026.2.0}
+    environment:
+      <<: *proxy-env
+      GATEWAY_CONFIG: /app/config.yaml
+      IR_DEVICE: CPU
+      MODEL_ID: ${MODEL_ID:?Set MODEL_ID in .env.example}
+      NO_PROXY: localhost,127.0.0.1,::1,ovms
+      no_proxy: localhost,127.0.0.1,::1,ovms
+    volumes:
+      - ./agent-config/inference-router:/app
+    depends_on:
+      ovms:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - qsr
+
   # Weather MCP service (services/weather). Demo weather is set with
   # `make weather CONDITION=rain TEMP=12`; for real weather set
   # WEATHER_BACKEND=open-meteo plus WEATHER_LATITUDE/WEATHER_LONGITUDE.
@@ -89,17 +109,20 @@ services:
       dockerfile: Dockerfile
       args:
         <<: *proxy-build-args
-        HERMES_INSTALL_URL: ${HERMES_INSTALL_URL:-https://hermes-agent.nousresearch.com/install.sh}
         HERMES_INSTALL_COMMIT: ${HERMES_INSTALL_COMMIT:-}
+        HERMES_INSTALL_SHA256: ${HERMES_INSTALL_SHA256:-}
     depends_on:
       ovms:
+        condition: service_started
+      inference-router:
         condition: service_started
       weather:
         condition: service_healthy
     environment:
       <<: *proxy-env
       MODEL_ID: ${MODEL_ID:?Set MODEL_ID in .env.example}
-      QSR_MODEL_BASE_URL: http://ovms:8000/v3
+      # Hermes goes through the Inference Router; the scope check and advisor call OVMS directly.
+      QSR_MODEL_BASE_URL: http://inference-router:8000/v1
       QSR_ADVISOR_BASE_URL: http://ovms:8000/v3
       QSR_UI_HOST: 0.0.0.0
       QSR_UI_PORT: "8600"
@@ -130,8 +153,8 @@ services:
       # ranges — remote MCP services (e.g. SAD on a 10.x host) are reached direct.
       # Python ignores CIDR entries, so LAN hosts it calls must be listed by IP
       # in QSR_EXTRA_NO_PROXY (comma-separated).
-      NO_PROXY: localhost,127.0.0.1,::1,ovms,weather,host.docker.internal,${QSR_EXTRA_NO_PROXY:-},10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.intel.com
-      no_proxy: localhost,127.0.0.1,::1,ovms,weather,host.docker.internal,${QSR_EXTRA_NO_PROXY:-},10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.intel.com
+      NO_PROXY: localhost,127.0.0.1,::1,ovms,inference-router,weather,host.docker.internal,${QSR_EXTRA_NO_PROXY:-},10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.intel.com
+      no_proxy: localhost,127.0.0.1,::1,ovms,inference-router,weather,host.docker.internal,${QSR_EXTRA_NO_PROXY:-},10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.intel.com
     ports:
       - "${QSR_UI_HOST:-0.0.0.0}:${QSR_UI_PORT:-8600}:8600"
     volumes:
