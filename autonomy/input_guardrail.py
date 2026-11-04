@@ -25,11 +25,13 @@ _STOPWORDS = frozenset({
     "their", "them", "this", "true", "use", "using", "version", "via", "what", "when",
     "which", "with", "your",
 })
+# Domain words shorter than the three-letter floor below.
+_SHORT_DOMAIN_WORDS = frozenset({"ad"})
 
 
 def _tokens(text: str) -> set[str]:
     return {word for word in re.findall(r"[a-z0-9]+", text.lower())
-            if len(word) >= 3 and word not in _STOPWORDS}
+            if (len(word) >= 3 or word in _SHORT_DOMAIN_WORDS) and word not in _STOPWORDS}
 
 
 def extract_scope_terms(skills_dir: Path) -> tuple[set[str], str]:

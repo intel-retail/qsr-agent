@@ -9,6 +9,8 @@
 | `Docker daemon is not available to this user` | Add your user to the `docker` group, then log out and back in. |
 | `qsr-agent` stays `starting` for several minutes | The model is loading and warming up on the GPU. Follow progress with `make logs`. |
 | `ovms` restarts repeatedly | Check `docker compose logs ovms`. Common causes are insufficient GPU memory and a GPU device the container cannot access. |
+| Agent cannot reach the model | Check `docker compose logs inference-router`. The router must list `MODEL_ID` as available; it forwards to `ovms`. |
+| Host install (`scripts/setup.sh`): `agent-harness-install-ovms` restarts with `source_model parameter is required` | The harness runs OVMS with `--config_path`, which rejects model flags. Leave `HARNESS_OVMS_EXTRA_ARGS` empty; `setup.sh` enables tool calls by adding `tool_parser: "hermes3"` to the model's `graph.pbtxt`. |
 | Settings changes have no effect | Edit `.env.example`, not `.env`. `make up` overwrites `.env`. |
 | Image pull fails | Check registry access and proxy settings, or build locally with `make up REGISTRY=false`. |
 | Build fails with `failed to download pinned uv ... (curl 60)` | A proxy node intercepts GitHub downloads. See [Builds Behind a Proxy](get-started/build-from-source.md#builds-behind-a-proxy). |
@@ -20,6 +22,8 @@
 | A service shows as unavailable in **Connected apps** | Confirm the service is running and its URL is reachable from the agent container. Use `host.docker.internal`, not `127.0.0.1`, for services on the same machine. |
 | A remote service is unreachable behind a proxy | Add the service host to `QSR_EXTRA_NO_PROXY` in `.env.example`, then run `make up`. |
 | An HTTPS service fails after it restarted | The service may have generated a new certificate. Run `make restart`. |
+| Host install (`scripts/setup.sh`): an HTTPS service with a self-signed certificate (for example digital signage) is missing its tools and `~/.hermes/logs/agent.log` shows `CERTIFICATE_VERIFY_FAILED` | `setup.sh` trusts each enabled HTTPS service's current certificate through `~/.hermes/remote-mcp-ca-bundle.pem` (`SSL_CERT_FILE`). Rerun `scripts/setup.sh` after the service restarts, and only on a trusted network. |
+| Chat answers "Blocked: … changes live state" or every MCP tool fails with `hook … failed closed` | The action gate (`agent-config/hermes/hooks/action_gate.py`) lets state-changing tools run only for explicit commands, so phrase the request as a command ("Show a carrot ad"). If all tools fail, `python3` or the script path in the `hooks:` section of `~/.hermes/config.yaml` is wrong; rerun `scripts/setup.sh`. |
 | Changes to `agent-config/` or `qsr-skills/` are ignored | Run `make restart`. |
 | A remote service stops answering after it restarted | The agent keeps its MCP session. Run `make restart`. |
 | A remote service is reachable again but still shows as unavailable | After repeated failures the agent parks the connection and retries every five minutes. Run `make restart` to reconnect now. If its port accepts connections but MCP requests time out, restart the service on its host. |

@@ -18,3 +18,4 @@ learning-export/
 operator-ui/dist/
 operator-ui/frontend/node_modules/
 operator-ui/frontend/*.tsbuildinfo
+.harness/

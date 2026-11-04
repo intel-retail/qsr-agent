@@ -46,6 +46,7 @@ sudo usermod -aG docker "$USER"
 |---|---|---|
 | 8600 | Operator UI and event webhook | All interfaces (`0.0.0.0`) |
 | 4444 | OpenVINO™ Model Server API | Loopback only |
+| 8010 | Inference Router (host install with `scripts/setup.sh`) | Loopback only |
 | 8090 | Weather service | Loopback only |
 
 Change ports and bindings in [Configuration](configuration.md).

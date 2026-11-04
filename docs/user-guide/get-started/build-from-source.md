@@ -31,7 +31,7 @@ make build REGISTRY=false
 |---|---|
 | `TAG` | Tag for the built images (default `latest`) |
 | `REGISTRY_URL` | Image name prefix (default `intel/`) |
-| `HERMES_INSTALL_COMMIT` | Pin the agent-runtime installer to a specific revision for reproducible builds |
+| `HERMES_INSTALL_COMMIT`, `HERMES_INSTALL_SHA256` | Hermes installer commit and its SHA-256, set together; default is the revision pinned in `scripts/hermes-pin.sh` |
 
 ```bash
 make up REGISTRY=false TAG=dev

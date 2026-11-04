@@ -13,8 +13,10 @@ RUN npm run build
 
 FROM python:3.12-slim AS builder
 
-ARG HERMES_INSTALL_URL=https://hermes-agent.nousresearch.com/install.sh
+# Hermes installer revision; empty keeps the commit and SHA-256 pinned in scripts/hermes-pin.sh.
+# To override, set both.
 ARG HERMES_INSTALL_COMMIT=
+ARG HERMES_INSTALL_SHA256=
 
 ENV HOME=/home/qsr \
     PATH=/home/qsr/.local/bin:/opt/qsr/.venv/mcp/bin:$PATH \
@@ -37,18 +39,11 @@ WORKDIR /opt/qsr
 
 # Installed before the app source so code edits don't re-run this slow, flaky download.
 USER qsr
-# Retries cover GitHub rate limits (HTTP 429) and intermittent TLS chain failures.
-RUN curl -fsSL "$HERMES_INSTALL_URL" -o /tmp/install-hermes.sh \
-    && set -- --skip-setup --non-interactive --skip-browser --skip-computer-use \
-    && if [ -n "$HERMES_INSTALL_COMMIT" ]; then set -- "$@" --commit "$HERMES_INSTALL_COMMIT"; fi \
-    && for attempt in 1 2 3 4 5; do \
-    bash /tmp/install-hermes.sh "$@" && break; \
-    if [ "$attempt" = 5 ]; then echo "Hermes install failed after $attempt attempts" >&2; exit 1; fi; \
-    wait_seconds=$((attempt * 60)); \
-    echo "Hermes install attempt $attempt failed; retrying in ${wait_seconds}s" >&2; \
-    sleep "$wait_seconds"; \
-    done \
-    && rm /tmp/install-hermes.sh
+COPY --chown=qsr:qsr scripts/hermes-pin.sh scripts/install-hermes.sh /tmp/qsr-install/
+RUN if [ -n "$HERMES_INSTALL_COMMIT" ]; then export HERMES_INSTALL_COMMIT; fi \
+    && if [ -n "$HERMES_INSTALL_SHA256" ]; then export HERMES_INSTALL_SHA256; fi \
+    && bash /tmp/qsr-install/install-hermes.sh \
+    && rm -rf /tmp/qsr-install
 
 COPY --chown=qsr:qsr autonomy/requirements.txt /opt/qsr/autonomy/requirements.txt
 RUN python3 -m venv /opt/qsr/.venv/mcp \

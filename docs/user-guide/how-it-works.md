@@ -9,6 +9,7 @@
 | Operator UI | Web interface for chat, connected-service status, decisions, approvals, and learning. Also receives events from store systems. |
 | Agent runtime (Hermes) | Understands the request, picks the relevant store skills, calls store services, and composes the answer. Keeps operator preferences in memory. |
 | OpenVINO™ Model Server | Serves the Qwen3 INT4 language model set by `MODEL_ID` on the Intel® GPU through an OpenAI-compatible API. |
+| Inference Router | Sits between the agent runtime and the model server, so the runtime sends model requests to one endpoint. In the host install (`scripts/setup.sh`) it, the model server and Hermes are installed by [agent-harness-install](https://github.com/open-edge-platform/edge-ai-libraries/tree/main/frameworks/agent-harness-install) at the commit set by `HARNESS_INSTALL_REF`. Hermes itself is installed at the release pinned in `scripts/hermes-pin.sh`, in both the container image and the host install (`setup.sh` sets the harness's Hermes pin to that value). |
 | Skills | Short procedures, one per store domain, that tell the agent which service and fields answer which question. |
 | Learner | Turns recorded operator actions into a learned skill per service. Each rule is checked against the records, and an operator approves the skill. |
 | Store services (MCP) | Own the store data and actions, and send the store events, for example kiosk queue changes or weather changes. Each service validates its own actions and enforces its own policy. Services run on their own hosts or share one; the agent and its model run on a separate machine. |
@@ -160,3 +161,12 @@ docker compose cp qsr-agent:/opt/qsr/learning ./learning-export
 - **Grounded answers:** the agent is instructed to answer only from service
   data and to report missing coverage.
 - **Scope limits:** off-topic questions are declined before a full model turn.
+- **Commands, not questions, change state:** in chat, a tool that changes live
+  state (showing or clearing an ad, marking a table) runs only when the
+  operator's message is an explicit command such as "Show a carrot ad", or a
+  short confirmation such as "yes, do it". A question like "would a carrot ad
+  be a good idea?" can read data but cannot change anything. This is enforced
+  by a Hermes hook (`agent-config/hermes/hooks/action_gate.py`), not by the
+  prompt. Tools are treated as read-only only when their name starts with a
+  read verb (`get_`, `list_`, `query_`, `compare_`, `describe`, ...), so a new
+  tool with another verb is gated until it is added to that list.
