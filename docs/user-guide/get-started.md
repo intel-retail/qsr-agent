@@ -6,10 +6,10 @@ Agent.
 ## Prerequisites
 
 - A Linux system with an Intel® GPU that meets the
-  [System Requirements](get-started/system-requirements.md).
+  [System Requirements](./get-started/system-requirements.md).
 - Docker Engine with the Compose plugin, Git, `make`, and Python 3.
-- Network access to GitHub, Docker Hub, and Hugging Face. Behind a proxy, see
-  [Configuration](get-started/configuration.md#proxy).
+- Network access to GitHub, Docker Hub, and Hugging Face. If you are behind a proxy, see
+  [Configuration](./get-started/configuration.md#proxy).
 
 ## Step 1: Get the Code
 
@@ -27,23 +27,18 @@ make download-models
 This downloads the model set by `MODEL_ID` in `.env.example` (default
 `OpenVINO/Qwen3-30B-A3B-Instruct-2507-int4-ov`, about 16 GB) into `./models`. The download is skipped if the model is already present.
 
-## Step 3: Connect the Kiosk and Order Accuracy Services
+## Step 3: Connect Store Services
 
-Kiosk and order-accuracy data come from the smart-kiosk-assistant and Order
-Accuracy (take-away, dine-in) services on their own hosts. Set their URLs in
-`.env.example` before you start the agent:
+Store data comes from the store services, which run on their own hosts. Set
+their MCP URLs in `.env.example` before you start the agent, for example:
 
 ```bash
-QSR_KIOSK_MCP_URL=http://<kiosk-host>:8014/mcp
-QSR_ORDER_ACCURACY_TAKE_AWAY_MCP_URL=http://<take-away-host>:8010/mcp
-QSR_ORDER_ACCURACY_DINE_IN_MCP_URL=http://<dine-in-host>:8011/mcp
-QSR_EXTRA_NO_PROXY=<kiosk-host>,<take-away-host>
+QSR_KIOSK_MCP_URL=http://<kiosk-host>:<port>/mcp
+QSR_EXTRA_NO_PROXY=<kiosk-host>
 ```
 
-The service hosts also need settings so their events reach the agent, and all
-hosts need synchronized clocks. See
-[Run Kiosk and Order Accuracy on Remote Hosts](get-started/configuration.md#run-kiosk-and-order-accuracy-on-remote-hosts).
-Without these URLs the agent runs with weather only.
+See [Connect Store Services](get-started/configuration.md#connect-store-services).
+Without service URLs the agent runs with weather only.
 
 ## Step 4: Start the Agent
 
@@ -54,10 +49,10 @@ make up
 `make up` checks Docker, the Intel GPU device, and the model. It then pulls the
 agent image and starts four containers (to run the code you cloned instead of
 the published image, use `make up REGISTRY=false`; see
-[Build from Source](get-started/build-from-source.md)):
+[Build from Source](./get-started/build-from-source.md)):
 
 | Container | Role |
-|---|---|
+| --- | --- |
 | `ovms` | OpenVINO™ Model Server running the language model on the Intel® GPU |
 | `inference-router` | Inference Router that the agent runtime sends model requests to; forwards them to `ovms` |
 | `qsr-agent` | Operator UI and agent runtime |
@@ -93,7 +88,7 @@ make weather CONDITION=rain TEMP=12
 
 The event appears in the **Autonomy Decisions** panel, and the agent evaluates
 it. If the agent proposes a change, such as taking cold drinks off the menu,
-select **Approve** or **Reject**. See the [Operator Guide](operator-guide.md)
+select **Approve** or **Reject**. See the [Operator Guide](./operator-guide.md#review-event-decisions)
 for more.
 
 ## Stop the Agent
@@ -107,6 +102,17 @@ restored on the next `make up`.
 
 ## Next Steps
 
-- Connect your store services: [Configuration](get-started/configuration.md).
-- Understand the system: [How It Works](how-it-works.md).
-- Build the images yourself: [Build from Source](get-started/build-from-source.md).
+- Connect your store services: [Configuration](./get-started/configuration.md#connect-store-services).
+- Understand the system: [How It Works](./how-it-works.md).
+- Familiarise yourself with the [Operator Guide](./operator-guide.md).
+
+<!--hide_directive
+:::{toctree}
+:hidden:
+
+./get-started/system-requirements.md
+./get-started/configuration.md
+./get-started/build-from-source.md
+
+:::
+hide_directive-->

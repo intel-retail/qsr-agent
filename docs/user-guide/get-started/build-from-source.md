@@ -12,7 +12,7 @@ make up REGISTRY=false
 This builds two images and starts the stack:
 
 | Image | Built from |
-|---|---|
+| --- | --- |
 | `intel/qsr-agent:<TAG>` | Repository root `Dockerfile` (operator UI, agent runtime, skills) |
 | `intel/qsr-weather:<TAG>` | `services/weather/` |
 
@@ -28,7 +28,7 @@ make build REGISTRY=false
 ## Options
 
 | Variable | Description |
-|---|---|
+| --- | --- |
 | `TAG` | Tag for the built images (default `latest`) |
 | `REGISTRY_URL` | Image name prefix (default `intel/`) |
 | `HERMES_INSTALL_COMMIT`, `HERMES_INSTALL_SHA256` | Hermes installer commit and its SHA-256, set together; default is the revision pinned in `scripts/hermes-pin.sh` |
@@ -41,7 +41,7 @@ make up REGISTRY=false TAG=dev
 
 Export `http_proxy`, `https_proxy`, and `no_proxy` before building. They are
 passed to the image build as build arguments. See
-[Configuration](configuration.md#proxy).
+[Configuration](./configuration.md#proxy).
 
 The agent-runtime installer downloads `uv` from GitHub release assets. Some
 proxy nodes intercept that host with a certificate the build image doesn't
