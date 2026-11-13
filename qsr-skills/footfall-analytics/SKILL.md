@@ -26,8 +26,8 @@ and density questions (entrance, counter, seating). This service is read-only
 ## Source of Counts
 
 Footfall is a zone-sensor count, not an order or `customer.arrived` count. For a question that
-also asks about orders or arrivals, call `cafe-operations` `query_history` as well, report each
-figure with its service name, and say so when the two differ.
+also asks about orders or arrivals, also call the `query_history` tool of the `cafe-operations`
+service, report each figure with its service name, and say so when the two differ.
 
 ## Complex Questions
 
