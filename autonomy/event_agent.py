@@ -46,6 +46,8 @@ class Skill:
     tools: tuple[str, ...]
     # Non-empty only for learned skills: the event types their sections cover.
     events: tuple[str, ...] = ()
+    # Built-in skills: the only event types the skill is offered for; empty = any event.
+    event_types: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -184,6 +186,14 @@ class HermesEventAgent:
             raise ValueError("event restaurant does not match this deployment")
         if self.refresh_skills:
             self.refresh_skills()
+        if not any(self._applies(skill, event) for skill in self.catalog.skills.values()):
+            # No model call: there is no guidance the model could load for this event.
+            return PolicyEvaluation(False, decision={
+                "event_id": event["event_id"], "event_type": event["event_type"], "event_data": event["data"],
+                "decision_source": "catalog", "skills": [], "reads": [], "observations": {},
+                "summary": f"No registered skill covers {event['event_type']} events; no action.",
+                "evaluated_at": time.time(),
+            })
         selected: dict[str, str] = {}
         for skill in self.catalog.skills.values():
             if event.get("event_type") in skill.events:
@@ -224,6 +234,8 @@ class HermesEventAgent:
                     for name in names:
                         if name not in self.catalog.skills:
                             raise ValueError(f"unknown skill: {name}")
+                        if not self._applies(self.catalog.skills[name], event):
+                            raise ValueError(f"{name} does not apply to {event['event_type']} events")
                         selected[name] = self._skill_text(self.catalog.skills[name], event["event_type"])
                     allowed = self._allowed(selected)
                     for call in reads:
@@ -350,6 +362,10 @@ class HermesEventAgent:
         return {tool for name in selected for tool in self.catalog.skills[name].tools}
 
     @staticmethod
+    def _applies(skill: Skill, event: dict[str, Any]) -> bool:
+        return not skill.event_types or event.get("event_type") in skill.event_types
+
+    @staticmethod
     def _skill_text(skill: Skill, event_type: str) -> str:
         text = skill.path.read_text(encoding="utf-8")
         if not skill.events:
@@ -411,7 +427,7 @@ class HermesEventAgent:
     ) -> str:
         catalog = [
             {"name": skill.name, "description": skill.description, "tools": skill.tools}
-            for skill in self.catalog.skills.values()
+            for skill in self.catalog.skills.values() if self._applies(skill, event)
         ]
         tools = [
             {"name": name, "description": tool.description, "read_only": tool.read_only,

@@ -26,6 +26,8 @@ BUILTIN_SKILLS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = 
      ("digital-signage.describe", "digital-signage.get_current_ad", "digital-signage.get_catalog",
       "digital-signage.select_dynamic_ad"), ()),
 )
+# Built-in skills offered only for these event types; the others apply to any event.
+SKILL_EVENT_TYPES: dict[str, tuple[str, ...]] = {"digital-signage": ("zone.density_changed",)}
 
 
 class MergedAccuracyClient:
@@ -202,4 +204,5 @@ def register_skills(catalog: CapabilityCatalog, root: Path, disabled: Iterable[s
         # The catalog requires an action's context reads to be part of the skill.
         tools += tuple(dict.fromkeys(read for tool in tools for read in catalog.tools[tool].required_reads
                                      if read not in tools))
-        catalog.register_skill(Skill(name, description, root / "qsr-skills" / name / "SKILL.md", tools))
+        catalog.register_skill(Skill(name, description, root / "qsr-skills" / name / "SKILL.md", tools,
+                                     event_types=SKILL_EVENT_TYPES.get(name, ())))

@@ -66,8 +66,12 @@ missing evidence instead of inventing a product or promo.
 This section applies only when the autonomy event agent evaluates a store
 event; it does not change how operator chat questions above are answered.
 
-For an event, the only tools you may read are `digital-signage.get_current_ad`
-and `digital-signage.get_catalog`; do not call `describe` and do not read any
+This skill is offered to the event agent only for `zone.density_changed`
+events from the footfall service; a table, queue or order event is never
+evidence of footfall density.
+
+The only tools you may read are `digital-signage.get_current_ad` and
+`digital-signage.get_catalog`; do not call `describe` and do not read any
 `footfall-service` tool: the event itself is the footfall evidence.
 
 Once those reads are in observations, decide from `event.data.density` FIRST,

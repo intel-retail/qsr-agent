@@ -333,6 +333,27 @@ class EventAgentTests(unittest.TestCase):
         self.assertFalse(evaluation.active)
         self.assertEqual(len(runner.prompts), 2)
 
+    def test_signage_skill_is_not_offered_for_other_event_types(self):
+        runner = ScriptedHermes({"skills": ["digital-signage"], "reads": []},
+                                {"summary": "not a footfall event", "action": None})
+        event = {"event_id": "table-1", "event_type": "table.dirty", "data": {"ref": "table-4"}}
+        catalog = self._signage_catalog()
+        evaluation = HermesEventAgent(runner, catalog).evaluate_event(event, False)
+        self.assertFalse(evaluation.active)
+        self.assertEqual(runner.prompts, [])
+        self.assertEqual(evaluation.decision["decision_source"], "catalog")
+        self.assertIn("No registered skill covers table.dirty", evaluation.decision["summary"])
+        # A skill that applies to any event brings the model back in, but the signage skill stays hidden.
+        catalog.register_tool(Capability("kiosk.get_kiosk_context", "ctx", catalog.tools["digital-signage.describe"].client,
+                                         "describe", True, store_scoped=False))
+        catalog.register_skill(Skill("kiosk-operations", "Store operations",
+                                     Path.cwd() / "qsr-skills" / "kiosk-operations" / "SKILL.md",
+                                     ("kiosk.get_kiosk_context",)))
+        evaluation = HermesEventAgent(runner, catalog).evaluate_event(event, False)
+        self.assertFalse(evaluation.active)
+        self.assertNotIn('"name":"digital-signage"', runner.prompts[0])
+        self.assertIn("digital-signage does not apply to table.dirty events", runner.prompts[1])
+
     def test_signage_skill_text_proposes_only_the_high_demand_ad_for_thirty_seconds(self):
         text = (Path.cwd() / "qsr-skills" / "digital-signage" / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("## Events", text)
