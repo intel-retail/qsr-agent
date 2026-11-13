@@ -1,0 +1,23 @@
+# Inference Router (intel/inference-router) in front of OVMS. Hermes sends every
+# request here; the router matches the requested model name exactly, so `model`
+# must equal MODEL_ID, the name OVMS registers. Same shape that
+# agent-harness-install generates for its own router.
+log_level: "INFO"
+providers:
+  - name: "ovms"
+    type: "hosted_vllm"
+    model: "${MODEL_ID}"
+    enabled: true
+    settings:
+      endpoint: "http://ovms:8000/v3"
+      auth:
+        scheme: "none"
+plugins:
+  prerouting: []
+  postrouting: []
+  postresponse: []
+routing:
+  policy: "Balanced"
+telemetry:
+  backend: "memory"
+  enabled: true

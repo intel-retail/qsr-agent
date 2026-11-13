@@ -47,13 +47,14 @@ make up
 ```
 
 `make up` checks Docker, the Intel GPU device, and the model. It then pulls the
-agent image and starts three containers (to run the code you cloned instead of
+agent image and starts four containers (to run the code you cloned instead of
 the published image, use `make up REGISTRY=false`; see
 [Build from Source](./get-started/build-from-source.md)):
 
 | Container | Role |
 | --- | --- |
 | `ovms` | OpenVINO™ Model Server running the language model on the Intel® GPU |
+| `inference-router` | Inference Router that the agent runtime sends model requests to; forwards them to `ovms` |
 | `qsr-agent` | Operator UI and agent runtime |
 | `weather` | Weather service (simulated by default) |
 
