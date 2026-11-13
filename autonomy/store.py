@@ -231,7 +231,14 @@ class ProposalStore:
                     existing["tool"] == proposed.tool
                     and existing["arguments"] == proposed.arguments
                 ):
-                    return existing
+                    # The newer evaluation carries the current evidence (and evaluated_at), so the
+                    # operator approves against it rather than the first occurrence.
+                    self._connection.execute(
+                        "UPDATE proposals SET summary = ?, evidence_json = ? WHERE id = ?",
+                        (proposed.summary, json.dumps(proposed.evidence, separators=(",", ":")), existing["id"]),
+                    )
+                    return self._decode(self._connection.execute(
+                        "SELECT * FROM proposals WHERE id = ?", (existing["id"],)).fetchone())
             if pending and replace_pending:
                 self._connection.execute(
                     """
