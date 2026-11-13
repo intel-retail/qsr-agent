@@ -114,6 +114,8 @@ services:
       EDGEMART_SIM_MCP_URL: ${EDGEMART_SIM_MCP_URL:-http://host.docker.internal:3101/mcp}
       EDGEMART_TABLE_SIM_MCP_URL: ${EDGEMART_TABLE_SIM_MCP_URL:-http://host.docker.internal:3201/mcp}
       EDGEMART_FOOTFALL_SIM_MCP_URL: ${EDGEMART_FOOTFALL_SIM_MCP_URL:-http://host.docker.internal:3301/mcp}
+      # Must match MCP_API_KEY on the sidecars; leave empty if they run without one.
+      EDGEMART_MCP_API_KEY: ${EDGEMART_MCP_API_KEY:-}
       # Remote SAD / Loss Prevention MCP services; empty removes the registration.
       QSR_SAD_MCP_URL: ${QSR_SAD_MCP_URL:-}
       QSR_LP_MCP_URL: ${QSR_LP_MCP_URL:-}

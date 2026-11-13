@@ -82,6 +82,8 @@ mcp_servers:
     enabled: true
     connect_timeout: 15
     timeout: 60
+    headers:
+      X-Api-Key: ${EDGEMART_MCP_API_KEY:-}
 
   # EdgeMart table occupancy & cleaning sim, same repo's `table-occupancy-service-mcp`
   # compose service (streamable-http on :3201).
@@ -91,6 +93,8 @@ mcp_servers:
     enabled: true
     connect_timeout: 15
     timeout: 60
+    headers:
+      X-Api-Key: ${EDGEMART_MCP_API_KEY:-}
 
   # EdgeMart footfall/movement sim (read-only), same repo's
   # `footfall-service-mcp` compose service (streamable-http on :3301).
@@ -100,6 +104,8 @@ mcp_servers:
     enabled: true
     connect_timeout: 15
     timeout: 60
+    headers:
+      X-Api-Key: ${EDGEMART_MCP_API_KEY:-}
 
   # Template — copy for a remote, authenticated service on another host:
   # your-service:
