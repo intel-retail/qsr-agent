@@ -23,6 +23,12 @@ and density questions (entrance, counter, seating). This service is read-only
 | When is the busiest time of day / rush hour | `get_busy_time_patterns` | `hour`, `total_footfall`, `days_observed`, `avg_footfall_per_day` | Omit `start_date`/`end_date` (a pattern needs several days). Report using `avg_footfall_per_day`, not raw `total_footfall`, so the answer isn't skewed by how many days were observed. |
 | List known event types | `list_event_types` | `event_type`, `description` | — |
 
+## Source of Counts
+
+Footfall is a zone-sensor count, not an order or `customer.arrived` count. For a question that
+also asks about orders or arrivals, call `cafe-operations` `query_history` as well, report each
+figure with its service name, and say so when the two differ.
+
 ## Complex Questions
 
 For "is it busier than usual" or staffing-style questions, call
