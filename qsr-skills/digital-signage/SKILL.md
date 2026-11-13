@@ -60,3 +60,57 @@ For multi-step requests (e.g. "show the right ad for this cold, rainy
 evening"), prefer `select_dynamic_ad` over guessing a product yourself — pass
 through the context the user gave and let the service resolve it. State
 missing evidence instead of inventing a product or promo.
+
+## Events
+
+This section applies only when the autonomy event agent evaluates a store
+event; it does not change how operator chat questions above are answered.
+
+For an event, the only tools you may read are `digital-signage.get_current_ad`
+and `digital-signage.get_catalog`; do not call `describe` and do not read any
+`footfall-service` tool: the event itself is the footfall evidence.
+
+Once those reads are in observations, decide from `event.data.density` FIRST,
+before looking at what the signage shows. Copy its exact value. If it is not
+the exact string `high` (for example `medium`, `low`, or missing), the decision
+is final regardless of the current ad: return
+`{"summary":"density is <value>; no action","action":null}`. Only an exact
+`high` continues below. Never describe a `medium` or `low` event as high.
+
+A `zone.density_changed` event from the footfall service reports that a store
+zone (`ref`: entrance, counter or seating) moved to a new density level:
+`low`, `medium` or `high`. Only `high` changes the signage: it shows the
+high-demand ad for 30 seconds, then the display returns to the camera-driven
+ad on its own. The event's `density` is the newest observation: decide only
+from it. If `density` is missing or not one of `low`, `medium`, `high`, return
+no action and do not read other tools to find one.
+
+1. `density` is not `high`: return no action. Do not call any action tool.
+2. `density` is `high`: read `get_current_ad` and `get_catalog`. If
+   `get_current_ad` reports `source` `agent` (or its summary says an
+   "agent-commanded ad" is showing), the ad is already on screen: return no
+   action. If a signage tool fails because the service is unreachable, return
+   no action.
+3. Otherwise you MUST propose `select_dynamic_ad` with
+   `{"demand": "high", "display_seconds": 30}`. Do this even when a
+   camera-driven ad is showing or there is no ad. The tool resolves the demand
+   to a product; do not reason about products or cross-sell links yourself.
+
+| density | decision |
+|---------|----------|
+| high    | propose `select_dynamic_ad` `{"demand": "high", "display_seconds": 30}` |
+| medium  | no action |
+| low     | no action |
+| missing | no action |
+
+The zone and `count` do not change the decision. Never pass `weather`,
+`age_mix` or `daypart`, and never set `benchmark`. Do not use `trigger_ad`,
+`trigger_video_ad` or `clear_ad` for an event; the ad ends by itself. The
+operator approves the proposal before anything changes on screen.
+
+`product_detected` and `ad_displayed` events only record what the signage
+already did; they never justify an action (reacting to them would loop).
+
+When you propose the action, quote the event's `ref`, `density`, `count` and
+`capacity` in a brief evidence-based summary. When there is no action, keep
+the summary to one short sentence.

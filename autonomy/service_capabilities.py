@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,20 @@ from .event_agent import Capability, CapabilityCatalog, Skill, StaleContextError
 from .learning import read_skill_meta
 
 ACCURACY_CONTEXT = "get_order_accuracy_context"
+WEATHER_READ = "weather.get_weather_details"
+# (name, description, required tools, optional tools). A skill is registered once all its required tools are,
+# so a service discovered after start-up gets its skill on the next `register_skills` call.
+BUILTIN_SKILLS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = (
+    ("event-menu-decisions", "Weather and queue events: decide whether menu availability should change",
+     ("kiosk.get_kiosk_context", "kiosk.change_menu_items"), (WEATHER_READ,)),
+    ("kiosk-operations", "Restaurant operations, menu, queue, wait, staffing and ordering activity",
+     ("kiosk.get_kiosk_context", "kiosk.change_menu_items"), ()),
+    ("order-accuracy", "Order mismatches, accuracy alerts, station issues and remake recommendations",
+     ("accuracy.get_order_accuracy_context", "accuracy.request_remake"), ()),
+    ("digital-signage", "Footfall events: show a high-demand ad on the signage when a store zone becomes crowded",
+     ("digital-signage.describe", "digital-signage.get_current_ad", "digital-signage.get_catalog",
+      "digital-signage.select_dynamic_ad"), ()),
+)
 
 
 class MergedAccuracyClient:
@@ -168,21 +183,23 @@ def register_defaults(
             "accuracy.request_remake", "Propose remaking an exact flagged order",
             accuracy, "request_remake", False, ("accuracy.get_order_accuracy_context",), validate_remake,
         ))
-    weather_reads: tuple[str, ...] = ()
     if weather is not None:
         catalog.register_tool(Capability(
-            "weather.get_weather_details",
+            WEATHER_READ,
             "Read current store-location weather: condition, is_raining, temperature_c, precipitation",
             weather, "get_weather_details", True, store_scoped=False,
         ))
-        weather_reads = ("weather.get_weather_details",)
-    for name, description, tools in (
-        ("event-menu-decisions", "Weather and queue events: decide whether menu availability should change",
-         ("kiosk.get_kiosk_context", "kiosk.change_menu_items", *weather_reads)),
-        ("kiosk-operations", "Restaurant operations, menu, queue, wait, staffing and ordering activity",
-         ("kiosk.get_kiosk_context", "kiosk.change_menu_items")),
-        ("order-accuracy", "Order mismatches, accuracy alerts, station issues and remake recommendations",
-         ("accuracy.get_order_accuracy_context", "accuracy.request_remake")),
-    ):
-        if all(tool in catalog.tools for tool in tools):
-            catalog.register_skill(Skill(name, description, root / "qsr-skills" / name / "SKILL.md", tools))
+    register_skills(catalog, root)
+
+
+def register_skills(catalog: CapabilityCatalog, root: Path, disabled: Iterable[str] = ()) -> None:
+    """Register the built-in skills whose tools are all in the catalog (idempotent; skips `disabled` names)."""
+    skip = set(disabled)
+    for name, description, required, optional in BUILTIN_SKILLS:
+        if name in catalog.skills or name in skip or not all(tool in catalog.tools for tool in required):
+            continue
+        tools = (*required, *(tool for tool in optional if tool in catalog.tools))
+        # The catalog requires an action's context reads to be part of the skill.
+        tools += tuple(dict.fromkeys(read for tool in tools for read in catalog.tools[tool].required_reads
+                                     if read not in tools))
+        catalog.register_skill(Skill(name, description, root / "qsr-skills" / name / "SKILL.md", tools))

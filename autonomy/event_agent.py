@@ -20,6 +20,10 @@ class StaleContextError(ValueError):
     pass
 
 
+# An approved proposal older than this is not executed; the operator submits a fresh event instead.
+APPROVAL_LIMIT_SECONDS = 300
+
+
 def parse_event_response(response: str) -> Any:
     decoder = json.JSONDecoder()
     payload, position = decoder.raw_decode(response)
@@ -491,7 +495,7 @@ class HermesEventAgent:
 
     def execute_approved(self, proposal: dict[str, Any]) -> dict[str, Any]:
         evidence = proposal["evidence"]
-        if time.time() - evidence.get("evaluated_at", 0) > 300:
+        if time.time() - evidence.get("evaluated_at", 0) > APPROVAL_LIMIT_SECONDS:
             raise ValueError("proposal expired; submit a fresh event")
         selected = {name: "" for name in evidence.get("skills", []) if name in self.catalog.skills}
         name, arguments = proposal["tool"], proposal["arguments"]

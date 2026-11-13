@@ -19,7 +19,7 @@ from autonomy.hermes_gateway import GatewayError
 from autonomy.event_agent import Capability, CapabilityCatalog, HermesEventAgent, Skill, StaleContextError, parse_event_response
 from autonomy.mcp import HttpMcpClient, StdioMcpClient
 from autonomy.registry import AutonomyRegistry
-from autonomy.service_capabilities import register_defaults, validate_menu, validate_remake
+from autonomy.service_capabilities import register_defaults, register_skills, validate_menu, validate_remake
 from autonomy.store import ProposalStore
 from autonomy.worker import build_controller
 
@@ -286,6 +286,88 @@ class EventAgentTests(unittest.TestCase):
         })
         self.assertTrue(result["executed"])
         self.assertEqual(self.service.calls[-1][0], "remake")
+
+    def test_signage_skill_registers_once_signage_tools_are_discovered(self):
+        service = FakeService()
+        catalog = CapabilityCatalog()
+        register_skills(catalog, Path.cwd())
+        self.assertNotIn("digital-signage", catalog.skills)
+        for name in ("describe", "get_current_ad", "get_catalog"):
+            catalog.register_tool(Capability(f"digital-signage.{name}", name, service, name, True))
+        catalog.register_tool(Capability(
+            "digital-signage.select_dynamic_ad", "Select ad", service, "select_dynamic_ad", False,
+            ("digital-signage.get_current_ad", "digital-signage.get_catalog"), lambda arguments, observations: None,
+        ))
+        register_skills(catalog, Path.cwd())
+        register_skills(catalog, Path.cwd())
+        catalog.validate()
+        self.assertEqual(catalog.skills["digital-signage"].tools, (
+            "digital-signage.describe", "digital-signage.get_current_ad", "digital-signage.get_catalog",
+            "digital-signage.select_dynamic_ad"))
+        catalog.remove_skill("digital-signage")
+        register_skills(catalog, Path.cwd(), ["digital-signage"])
+        self.assertNotIn("digital-signage", catalog.skills)
+
+    def test_high_density_event_proposes_the_high_demand_ad(self):
+        read = {"skills": ["digital-signage"], "reads": [
+            {"tool": "digital-signage.get_current_ad", "arguments": {}},
+            {"tool": "digital-signage.get_catalog", "arguments": {}}]}
+        decision = {"summary": "counter is high (11 of 12)", "action": {
+            "tool": "digital-signage.select_dynamic_ad", "arguments": {"demand": "high", "display_seconds": 30}}}
+        runner = ScriptedHermes(read, decision)
+        event = {"event_id": "zone-1", "event_type": "zone.density_changed",
+                 "data": {"ref": "counter", "density": "high", "count": 11, "capacity": 12}}
+        evaluation = HermesEventAgent(runner, self._signage_catalog()).evaluate_event(event, False)
+        self.assertEqual(evaluation.proposal.tool, "digital-signage.select_dynamic_ad")
+        self.assertEqual(evaluation.proposal.arguments, {"demand": "high", "display_seconds": 30})
+        self.assertIn("## Events", runner.prompts[1])
+
+    def test_non_high_density_event_reaches_the_model_and_ends_without_action(self):
+        runner = ScriptedHermes({"skills": ["digital-signage"], "reads": [
+            {"tool": "digital-signage.get_current_ad", "arguments": {}},
+            {"tool": "digital-signage.get_catalog", "arguments": {}}]},
+            {"summary": "No action", "action": None})
+        event = {"event_id": "zone-1", "event_type": "zone.density_changed",
+                 "data": {"ref": "counter", "density": "medium", "count": 6, "capacity": 12}}
+        evaluation = HermesEventAgent(runner, self._signage_catalog()).evaluate_event(event, False)
+        self.assertFalse(evaluation.active)
+        self.assertEqual(len(runner.prompts), 2)
+
+    def test_signage_skill_text_proposes_only_the_high_demand_ad_for_thirty_seconds(self):
+        text = (Path.cwd() / "qsr-skills" / "digital-signage" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("## Events", text)
+        for expected in ("zone.density_changed", "`high`", "30", "MUST propose `select_dynamic_ad`",
+                         "agent-commanded ad", '"demand": "high"', "product_detected", "ad_displayed"):
+            self.assertIn(expected, text)
+        self.assertNotIn("MUST propose `clear_ad`", text)
+
+    def _signage_catalog(self):
+        class SignageService:
+            def list_tools(self):
+                return [
+                    {"name": "describe", "inputSchema": {"type": "object"}},
+                    {"name": "get_current_ad", "inputSchema": {"type": "object"}},
+                    {"name": "get_catalog", "inputSchema": {"type": "object"}},
+                    {"name": "select_dynamic_ad", "inputSchema": {
+                        "type": "object",
+                        "properties": {"demand": {"type": "string"}, "display_seconds": {"type": "integer"}},
+                        "required": ["demand"], "additionalProperties": False}},
+                ]
+
+            def call_tool(self, name, arguments):
+                return {"result": "ok", "executed": True}
+
+        service = SignageService()
+        catalog = CapabilityCatalog()
+        for name in ("describe", "get_current_ad", "get_catalog"):
+            catalog.register_tool(Capability(f"digital-signage.{name}", name, service, name, True, store_scoped=False))
+        catalog.register_tool(Capability(
+            "digital-signage.select_dynamic_ad", "Select ad", service, "select_dynamic_ad", False,
+            ("digital-signage.get_current_ad", "digital-signage.get_catalog"),
+            lambda arguments, observations: None, store_scoped=False,
+        ))
+        register_skills(catalog, Path.cwd())
+        return catalog
 
     def test_skill_prefixed_tool_names_resolve_to_registered_capabilities(self):
         prefixed_read = {"skills": ["accuracy"], "reads": [{"tool": "accuracy.accuracy.context", "arguments": {}}]}
