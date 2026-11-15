@@ -28,11 +28,11 @@ answer from memory or an earlier turn when a fresh tool call is available.
 ## Source of Counts
 
 - Order counts and `customer.arrived` / `customer.departed` counts come from this service
-  (`query_history` with `event_type`). A question that asks for orders always needs this tool,
-  even when `footfall-analytics` is also used for part of the answer.
-- People counted by zone sensors (entrance, counter, seating) belong to `footfall-analytics`.
-  The two counts are independent and can differ; when both are used, give each figure with
-  its service name instead of merging them.
+  (`store-activity-service`, `query_history` with `event_type`). A question that asks for orders
+  always needs this tool, even when the `footfall-service` is also used for part of the answer.
+- People counted by zone sensors (entrance, counter, seating) belong to the `footfall-service`
+  (footfall-analytics skill). The two counts are independent and can differ; when both are used,
+  give each figure with its service name instead of merging them.
 - Name the service each figure came from in the answer.
 
 ## Complex Questions
