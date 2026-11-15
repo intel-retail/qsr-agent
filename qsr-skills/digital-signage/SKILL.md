@@ -6,6 +6,11 @@ platforms: [linux]
 metadata:
   hermes:
     tags: [QSR, Digital-Signage, Advertising, Advertisement, Video, Video-Ad, Promo, Promotion, Retail-Media]
+  # Event-agent registration: offered only for these event types, may use only this service's tools.
+  qsr:
+    service: digital-signage
+    event_types: [zone.density_changed]
+    tools: [describe, get_current_ad, get_catalog, select_dynamic_ad]
 ---
 
 # Digital Signage
@@ -66,9 +71,9 @@ missing evidence instead of inventing a product or promo.
 This section applies only when the autonomy event agent evaluates a store
 event; it does not change how operator chat questions above are answered.
 
-This skill is offered to the event agent only for `zone.density_changed`
-events from the footfall service; a table, queue or order event is never
-evidence of footfall density.
+This skill is offered to the event agent only for the event types declared in
+its frontmatter (`zone.density_changed` from the footfall service); a table,
+queue or order event is never evidence of footfall density.
 
 The only tools you may read are `digital-signage.get_current_ad` and
 `digital-signage.get_catalog`; do not call `describe` and do not read any
