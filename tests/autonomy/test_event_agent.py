@@ -516,6 +516,25 @@ class EventAgentTests(unittest.TestCase):
             self.assertEqual(len(reopened.decisions()), 3)
             reopened.close()
 
+    def test_repeated_proposal_refreshes_pending_evidence_so_approval_is_not_expired(self):
+        runner = ScriptedHermes(self.read, self.action, self.read, {**self.action, "summary": "Still flagged"})
+        with tempfile.TemporaryDirectory() as temporary:
+            store = ProposalStore(Path(temporary) / "state.db")
+            registry = AutonomyRegistry()
+            registry.register_event(HermesEventAgent(runner, self.catalog))
+            controller = registry.build(store)
+            first = controller.receive_event(self.event)["proposal"]
+            with store._connection:
+                store._connection.execute(
+                    "UPDATE proposals SET evidence_json = ? WHERE id = ?",
+                    (json.dumps({**first["evidence"], "evaluated_at": time.time() - 3600}), first["id"]))
+            again = controller.receive_event({**self.event, "event_id": "test-2"})["proposal"]
+            self.assertEqual(again["id"], first["id"])
+            self.assertEqual(again["summary"], "Still flagged")
+            self.assertEqual(controller.status()["pending"], 1)
+            self.assertEqual(controller.approve(first["id"])["status"], "executed")
+            store.close()
+
     def test_failed_event_can_retry_and_error_is_visible(self):
         runner = ScriptedHermes({"bad": "response"}, {"summary": "No action", "action": None})
         with tempfile.TemporaryDirectory() as temporary:
