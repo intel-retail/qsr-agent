@@ -50,6 +50,11 @@ Store event -> queue -> agent gathers context -> no action  (reason shown)
 There is no fixed rule such as "rain means add hot drinks". The agent decides
 from the current context, and the operator stays in control.
 
+A service's skill opts into event handling by declaring, in its `SKILL.md`
+frontmatter under `metadata.qsr`, the event types it responds to and the
+service's own tools it may use; the skill text carries the decision rules. An
+event that no registered skill covers ends as "no action" without a model run.
+
 ## Learning From Operators
 
 When an event is shown, the operator can approve or reject the proposal, give a

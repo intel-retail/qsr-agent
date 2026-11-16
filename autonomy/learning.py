@@ -302,7 +302,8 @@ def read_skill_meta(path: Path) -> dict[str, Any]:
     return meta
 
 
-def parse_skill_meta(text: str) -> dict[str, Any]:
+def parse_frontmatter(text: str) -> dict[str, Any]:
+    """The YAML mapping between the leading `---` markers of a SKILL.md."""
     if not text.startswith("---"):
         raise ValueError("missing frontmatter")
     end = text.find("\n---", 3)
@@ -311,6 +312,11 @@ def parse_skill_meta(text: str) -> dict[str, Any]:
     front = yaml.safe_load(text[3:end]) or {}
     if not isinstance(front, dict):
         raise ValueError("frontmatter must be a mapping")
+    return front
+
+
+def parse_skill_meta(text: str) -> dict[str, Any]:
+    front = parse_frontmatter(text)
     qsr = ((front.get("metadata") or {}).get("qsr") or {})
     name, description = front.get("name"), front.get("description")
     events, tools = qsr.get("events"), qsr.get("tools")

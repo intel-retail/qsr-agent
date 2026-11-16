@@ -11,7 +11,13 @@ from .learning import learning_dir
 from .mcp import HttpMcpClient
 from .registry import AutonomyRegistry, load_extensions
 from .store import ProposalStore
-from .service_capabilities import MergedAccuracyClient, register_defaults, register_learned_skills
+from .service_capabilities import (
+    MergedAccuracyClient, register_defaults, register_learned_skills, register_skills,
+)
+
+
+def _env_names(variable: str) -> list[str]:
+    return [name.strip() for name in os.environ.get(variable, "").split(",") if name.strip()]
 
 
 def build_registry(project_root: Path) -> AutonomyRegistry:
@@ -34,13 +40,13 @@ def build_registry(project_root: Path) -> AutonomyRegistry:
         registry,
         os.environ.get("QSR_AUTONOMY_MODULES", "").split(","),
     )
-    disabled_tools = [name.strip() for name in os.environ.get(
-        "QSR_AUTONOMY_DISABLED_TOOLS", ""
-    ).split(",") if name.strip()]
+    disabled_tools = _env_names("QSR_AUTONOMY_DISABLED_TOOLS")
     registry.catalog.remove_tools(*disabled_tools)
-    for name in os.environ.get("QSR_AUTONOMY_DISABLED_SKILLS", "").split(","):
-        registry.catalog.remove_skill(name.strip())
+    disabled_skills = _env_names("QSR_AUTONOMY_DISABLED_SKILLS")
+    for name in disabled_skills:
+        registry.catalog.remove_skill(name)
     discover(registry.catalog, hermes_servers(), disabled_tools)
+    register_skills(registry.catalog, project_root, disabled_skills)
     register_learned_skills(registry.catalog, learning_dir(project_root) / "skills")
     return registry
 
@@ -54,14 +60,14 @@ def build_controller(root: Path | None = None) -> AutonomyController:
     )
     registry = build_registry(project_root)
     learned = learning_dir(project_root) / "skills"
-    disabled = [name.strip() for name in os.environ.get("QSR_AUTONOMY_DISABLED_TOOLS", "").split(",")]
+    disabled = _env_names("QSR_AUTONOMY_DISABLED_TOOLS")
+    disabled_skills = _env_names("QSR_AUTONOMY_DISABLED_SKILLS")
 
     def refresh_skills() -> None:
         # Services that come online later (or were unreachable at start) join without a restart.
         discover(registry.catalog, hermes_servers(), disabled)
+        register_skills(registry.catalog, project_root, disabled_skills)
         register_learned_skills(registry.catalog, learned)
 
-    registry.register_event(HermesEventAgent(
-        HermesRunner(), registry.catalog, refresh_skills=refresh_skills,
-    ))
+    registry.register_event(HermesEventAgent(HermesRunner(), registry.catalog, refresh_skills=refresh_skills))
     return registry.build(store=ProposalStore(state_path))
