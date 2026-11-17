@@ -48,6 +48,9 @@ class Skill:
     events: tuple[str, ...] = ()
     # Built-in skills: the only event types the skill is offered for; empty = any event.
     event_types: tuple[str, ...] = ()
+    # Declared skills: event.data field -> accepted values. An action is refused (no action) unless every
+    # field matches, so a model that misreads the event cannot propose it.
+    action_when: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -292,6 +295,10 @@ class HermesEventAgent:
                 name = self._resolve_tool(action["tool"], selected)
                 if not isinstance(name, str) or name not in self._allowed(selected):
                     raise ValueError("action is not permitted by selected skills")
+                refused = self._action_guard(event, selected, name)
+                if refused:
+                    evidence.update(summary=refused, model_summary=decision["summary"], guard="action_when")
+                    return PolicyEvaluation(False, decision=evidence)
                 missing = [read for read in self.catalog.tools[name].required_reads if read not in observations]
                 if missing:
                     # Required context reads are side-effect free, so fetch them rather than reject repeatedly.
@@ -360,6 +367,20 @@ class HermesEventAgent:
 
     def _allowed(self, selected: dict[str, str]) -> set[str]:
         return {tool for name in selected for tool in self.catalog.skills[name].tools}
+
+    def _action_guard(self, event: dict[str, Any], selected: dict[str, str], tool: str) -> str | None:
+        """Why a selected skill refuses `tool` for this event, or None when its action_when fields all match."""
+        data = event.get("data") or {}
+        for name in selected:
+            skill = self.catalog.skills[name]
+            if tool not in skill.tools:
+                continue
+            for field, values in skill.action_when:
+                actual = data.get(field)
+                if not isinstance(actual, str) or actual not in values:
+                    return (f"{field} is {actual!r}; {name} allows {tool.split('.', 1)[-1]} only when "
+                            f"{field} is {' or '.join(values)}; no action.")
+        return None
 
     @staticmethod
     def _applies(skill: Skill, event: dict[str, Any]) -> bool:

@@ -216,7 +216,8 @@ def register_declared_skills(catalog: CapabilityCatalog, skills_dir: Path, disab
             continue
         tools = tuple(f"{meta['service']}.{tool}" for tool in meta["tools"])
         if all(tool in catalog.tools for tool in tools):
-            _register(catalog, meta["name"], meta["description"], path, tools, tuple(meta["event_types"]))
+            _register(catalog, meta["name"], meta["description"], path, tools, tuple(meta["event_types"]),
+                      tuple((field, tuple(values)) for field, values in meta["action_when"].items()))
 
 
 def _declared_meta(path: Path) -> dict[str, Any] | None:
@@ -255,13 +256,21 @@ def _validate_declaration(front: dict[str, Any], qsr: dict[str, Any], directory:
         raise ValueError("metadata.qsr.tools may only name the skill's own service tools (no '<service>.' prefix)")
     if not isinstance(event_types, list) or not all(isinstance(kind, str) and kind for kind in event_types):
         raise ValueError("metadata.qsr.event_types must be a list of event type names")
+    action_when = qsr.get("action_when", {})
+    if not isinstance(action_when, dict) or not all(
+        isinstance(field, str) and field and isinstance(values, list) and values
+        and all(isinstance(value, str) and value for value in values)
+        for field, values in action_when.items()
+    ):
+        raise ValueError("metadata.qsr.action_when must map event data fields to non-empty lists of accepted values")
     return {"name": name, "description": description.strip(), "service": service, "tools": tools,
-            "event_types": event_types}
+            "event_types": event_types, "action_when": action_when}
 
 
 def _register(catalog: CapabilityCatalog, name: str, description: str, path: Path, tools: tuple[str, ...],
-              event_types: tuple[str, ...] = ()) -> None:
+              event_types: tuple[str, ...] = (),
+              action_when: tuple[tuple[str, tuple[str, ...]], ...] = ()) -> None:
     # The catalog requires an action's context reads to be part of the skill.
     tools += tuple(dict.fromkeys(read for tool in tools for read in catalog.tools[tool].required_reads
                                  if read not in tools))
-    catalog.register_skill(Skill(name, description, path, tools, event_types=event_types))
+    catalog.register_skill(Skill(name, description, path, tools, event_types=event_types, action_when=action_when))

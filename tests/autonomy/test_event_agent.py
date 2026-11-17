@@ -376,6 +376,25 @@ class EventAgentTests(unittest.TestCase):
         self.assertFalse(evaluation.active)
         self.assertEqual(len(runner.prompts), 2)
 
+    def test_medium_density_action_is_refused_by_the_declared_guard(self):
+        # The model misreads medium as high; the skill's action_when turns that into a visible no-action.
+        runner = ScriptedHermes({"skills": ["digital-signage"], "reads": [
+            {"tool": "digital-signage.get_current_ad", "arguments": {}},
+            {"tool": "digital-signage.get_catalog", "arguments": {}}]},
+            {"summary": "Density is high; propose dynamic ad", "action": {
+                "tool": "digital-signage.select_dynamic_ad", "arguments": {"demand": "high", "display_seconds": 30}}})
+        event = {"event_id": "zone-1", "event_type": "zone.density_changed",
+                 "data": {"ref": "counter", "density": "medium", "count": 7, "capacity": 12}}
+        evaluation = HermesEventAgent(runner, self._signage_catalog()).evaluate_event(event, False)
+        self.assertFalse(evaluation.active)
+        self.assertIsNone(evaluation.proposal)
+        self.assertEqual(
+            evaluation.decision["summary"],
+            "density is 'medium'; digital-signage allows select_dynamic_ad only when density is high; no action.")
+        self.assertEqual(evaluation.decision["model_summary"], "Density is high; propose dynamic ad")
+        self.assertEqual(evaluation.decision["guard"], "action_when")
+        self.assertEqual(len(runner.prompts), 2)
+
     def test_signage_skill_is_not_offered_for_other_event_types(self):
         runner = ScriptedHermes({"skills": ["digital-signage"], "reads": []},
                                 {"summary": "not a footfall event", "action": None})
