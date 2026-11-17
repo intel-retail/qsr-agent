@@ -11,6 +11,9 @@ metadata:
     service: digital-signage
     event_types: [zone.density_changed]
     tools: [describe, get_current_ad, get_catalog, select_dynamic_ad]
+    # Enforced in code, not just by the prose below: no action unless the event's density is exactly high.
+    action_when:
+      density: [high]
 ---
 
 # Digital Signage
