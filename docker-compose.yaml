@@ -16,7 +16,7 @@ x-proxy-env: &proxy-env
 
 services:
   ovms:
-    # Pinned by digest (openvino/model_server:2026.2-gpu); the host install runs the same image.
+    # Pinned by digest (openvino/model_server:2026.2-gpu). The host install uses the image agent-harness-install recommends.
     image: ${OVMS_IMAGE:-openvino/model_server:2026.2-gpu@sha256:fdc34725b35d79cde23cff1967f90efb40237b7cf5545a70460209056f3da733}
     command:
       - --rest_port

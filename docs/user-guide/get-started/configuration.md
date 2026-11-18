@@ -32,7 +32,7 @@ See [Connect Store Services](#connect-store-services) and
 | `QSR_UI_HOST` | `0.0.0.0` | Interface the operator UI listens on. Use `127.0.0.1` for local-only access |
 | `QSR_UI_PORT` | `8600` | Operator UI port |
 | `OVMS_PORT` | `4444` | Host port for the model server API (loopback only) |
-| `OVMS_IMAGE` | `openvino/model_server:2026.2-gpu@sha256:…` | Model server image, pinned by digest; the host install runs the same image |
+| `OVMS_IMAGE` | `openvino/model_server:2026.2-gpu@sha256:…` | Model server image for `make up`, pinned by digest. The host install (`scripts/setup.sh`) uses the image agent-harness-install recommends unless `HARNESS_OVMS_IMAGE` is set |
 | `COMPOSE_PROFILES` | empty | Set to `router` to also run the Inference Router container in front of the model server (the host install always runs it). Set `QSR_MODEL_BASE_URL=http://inference-router:8000/v1` with it |
 | `QSR_MODEL_BASE_URL` | `http://ovms:8000/v3` | Endpoint the agent runtime sends model requests to |
 | `WEATHER_PORT` | `8090` | Host port for the weather service (loopback only) |
@@ -119,33 +119,27 @@ After editing the file, run `make restart`. Self-signed HTTPS certificates on
 service endpoints are trusted automatically each time the agent starts. If a
 service regenerates its certificate, restart the agent.
 
-### HTTPS Services on a Host Install
+### Remote Services on a Host Install
 
-The host install (`scripts/setup.sh`) does not trust self-signed certificates
-automatically. An HTTPS service with one is enabled but registers no tools, and
-`~/.hermes/logs/agent.log` shows `CERTIFICATE_VERIFY_FAILED`. Trust its current
-certificate yourself, on a trusted network only, and point the whole agent
-process tree at a bundle that keeps the system CAs. `<URL_VARIABLE>` is the
-service's variable from the table above. The system CA bundle path shown is
-Debian's and Ubuntu's; other distributions keep it elsewhere (for example
-`/etc/pki/tls/certs/ca-bundle.crt` on Fedora and RHEL):
+`scripts/setup.sh` does for the host install what the container does at start:
 
-```bash
-HOST=10.0.0.5; PORT=5000
-openssl s_client -connect "$HOST:$PORT" -servername "$HOST" </dev/null 2>/dev/null \
-  | openssl x509 > /tmp/service.crt
-cat /etc/ssl/certs/ca-certificates.crt /tmp/service.crt > ~/.hermes/remote-mcp-ca-bundle.pem
-chmod 600 ~/.hermes/remote-mcp-ca-bundle.pem
-echo "SSL_CERT_FILE=$HOME/.hermes/remote-mcp-ca-bundle.pem" >> ~/.hermes/.env
-kill "$(cat /tmp/qsr-operator-ui.pid)"   # setup.sh keeps a healthy UI, so stop it first
-SSL_CERT_FILE=$HOME/.hermes/remote-mcp-ca-bundle.pem <URL_VARIABLE>=https://$HOST:$PORT/mcp \
-  scripts/setup.sh
-```
+- **Proxy bypass.** The host of every reachable service is added to `NO_PROXY`
+  and `no_proxy` in `~/.hermes/.env`, together with loopback, your shell's
+  `NO_PROXY`, `QSR_EXTRA_NO_PROXY` (export it before running `setup.sh`), and
+  any entries already in that file. Hermes then reaches the service directly,
+  the same way the setup reachability check does.
+- **Self-signed HTTPS certificates.** The current certificate of every reachable
+  HTTPS service is trusted. `setup.sh` writes it, with the system CAs, to
+  `~/.hermes/remote-mcp-ca-bundle.pem`, sets `SSL_CERT_FILE` to that file in
+  `~/.hermes/.env`, and starts the operator UI with it. This trusts whatever
+  certificate the service presents at that moment, so use it on a trusted
+  network only. An `SSL_CERT_FILE` you already set in `~/.hermes/.env` for
+  another bundle is left alone, and then you must add the service certificate
+  to that bundle yourself.
 
-The `SSL_CERT_FILE` export must be set when `setup.sh` starts the operator UI,
-because the UI launches the agent runtime that opens the MCP connections.
-Repeat these steps whenever the service regenerates its certificate; some
-services do so on every restart.
+The operator UI restarts when either file changes. If a service regenerates its
+certificate (some do on every restart), tools from that service fail with
+`CERTIFICATE_VERIFY_FAILED` until you rerun `scripts/setup.sh`.
 
 ## Send Events From Store Systems
 

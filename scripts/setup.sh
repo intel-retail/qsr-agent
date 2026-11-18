@@ -29,20 +29,14 @@ LEGACY_MODELS_DIR="$HOME/.agent-harness-install/models"
 if [[ $HARNESS_MODELS_DIR == "$MODEL_ROOT" && -f "$LEGACY_MODELS_DIR/$MODEL_ID/graph.pbtxt" && ! -e "$MODEL_ROOT/$MODEL_ID" ]]; then
     HARNESS_MODELS_DIR=$LEGACY_MODELS_DIR
 fi
-# The OVMS image docker-compose.yaml runs, by digest, so both install paths serve with the same server.
-HARNESS_OVMS_IMAGE=${HARNESS_OVMS_IMAGE:-openvino/model_server:2026.2-gpu@sha256:fdc34725b35d79cde23cff1967f90efb40237b7cf5545a70460209056f3da733}
 HARNESS_OVMS_CONTAINER=${HARNESS_OVMS_CONTAINER:-agent-harness-install-ovms}
 HARNESS_IR_CONTAINER=${HARNESS_IR_CONTAINER:-agent-harness-install-ir}
 # The harness runs OVMS with --config_path, which rejects model flags such as --tool_parser and
 # --task (the container crash-loops), so leave this empty.
 HARNESS_OVMS_EXTRA_ARGS=${HARNESS_OVMS_EXTRA_ARGS:-}
-# Tool-call parser the harness writes into the model's graph.pbtxt. The OVMS image above (2026.2)
-# predates parser auto-detection (OVMS 2026.3), so Hermes gets plain text instead of tool_calls
-# without it. Set to "none" to disable parsing.
-HARNESS_OVMS_TOOL_PARSER=${HARNESS_OVMS_TOOL_PARSER:-hermes3}
 # Set to 1 to accept OVMS running on the CPU (debugging only; the agent is unusably slow).
 ALLOW_CPU_INFERENCE=${ALLOW_CPU_INFERENCE:-0}
-export HARNESS_OVMS_REST_PORT HARNESS_IR_PORT HARNESS_OVMS_EXTRA_ARGS HARNESS_OVMS_TOOL_PARSER HARNESS_MODELS_DIR HARNESS_OVMS_IMAGE HARNESS_OVMS_CONTAINER HARNESS_IR_CONTAINER
+export HARNESS_OVMS_REST_PORT HARNESS_IR_PORT HARNESS_OVMS_EXTRA_ARGS HARNESS_MODELS_DIR HARNESS_OVMS_CONTAINER HARNESS_IR_CONTAINER
 ROUTER_URL=http://127.0.0.1:$HARNESS_IR_PORT/v1
 # The Router matches model names exactly and serves the Hugging Face id without its org prefix.
 SERVED_MODEL=${MODEL_ID##*/}
@@ -94,6 +88,10 @@ export HF_HUB_DISABLE_TELEMETRY=1
 # The model and MCP services are all on loopback. If a proxy is configured,
 # localhost must bypass it or the OVMS call fails with "403 incorrect proxy
 # service". Ensure loopback is always in no_proxy for setup-time calls.
+# The caller's own bypass list, either spelling, for the Hermes .env written by configure_hermes.
+# NO_PROXY itself stays as before because agent-harness-install derives the Docker daemon's proxy
+# drop-in from it, and a changed drop-in restarts dockerd.
+export QSR_CALLER_NO_PROXY="${NO_PROXY:-}${no_proxy:+,$no_proxy}"
 export NO_PROXY="localhost,127.0.0.1,::1${NO_PROXY:+,$NO_PROXY}"
 export no_proxy="$NO_PROXY"
 
@@ -112,9 +110,8 @@ Optional environment variables:
                         (default: pinned in scripts/hermes-pin.sh)
     HARNESS_DIR         Where the installer is fetched (default: <repo>/.harness)
     HARNESS_IR_PORT     Loopback port for the Inference Router (default: 4445)
-    HARNESS_OVMS_IMAGE  OVMS image (default: the digest-pinned image docker-compose.yaml uses)
+    HARNESS_OVMS_IMAGE  OVMS image (default: the one agent-harness-install recommends)
     HARNESS_OVMS_EXTRA_ARGS  Extra OVMS server flags (default: none; model flags are rejected in config mode)
-    HARNESS_OVMS_TOOL_PARSER  Tool-call parser written into the model's graph.pbtxt (default: hermes3; none disables)
     HARNESS_MODELS_DIR  Where the harness stores OVMS models (default: MODEL_ROOT, or an existing
                         export under ~/.agent-harness-install/models from an earlier version)
     HARNESS_OVMS_CONTAINER  OVMS container name (default: agent-harness-install-ovms)
@@ -369,6 +366,7 @@ configure_hermes() {
 import os
 import re
 import socket
+import ssl
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -463,6 +461,87 @@ for name, spec in servers.items():
         spec["enabled"] = alive
         print(f"[qsr-setup] remote MCP '{name}' {'reachable, enabled' if alive else 'unreachable, disabled'} ({spec['url']})")
 
+
+# Host install: do for the `hermes` process what the container does for it.
+# The reachability probe above is a direct socket connect, so Hermes must reach
+# the same hosts directly, and an https service with a self-signed cert (e.g.
+# digital-signage's nginx) must be trusted or its tools never register.
+env_path = config_path.parent / ".env"
+CA_BUNDLE = config_path.parent / "remote-mcp-ca-bundle.pem"
+
+
+def read_env_file() -> dict[str, str]:
+    values: dict[str, str] = {}
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            key, sep, value = line.partition("=")
+            if sep and not key.lstrip().startswith("#"):
+                values[key.strip()] = value.strip()
+    return values
+
+
+def update_env_file(updates: dict[str, str]) -> None:
+    lines = env_path.read_text().splitlines() if env_path.exists() else []
+    kept = [line for line in lines if line.partition("=")[0].strip() not in updates]
+    kept += [f"{key}={value}" for key, value in updates.items()]
+    text = "\n".join(kept) + "\n"
+    # Leave the mtime alone when nothing changed: setup.sh restarts the UI only if it moved.
+    if not env_path.exists() or env_path.read_text() != text:
+        env_path.write_text(text)
+    env_path.chmod(0o600)
+
+
+enabled_remotes = {
+    name: urlparse(str(spec["url"]))
+    for name, spec in servers.items()
+    if isinstance(spec, dict) and spec.get("url") and spec.get("enabled")
+}
+
+# Loopback, the caller's own NO_PROXY and QSR_EXTRA_NO_PROXY (merged by the
+# shell above), entries already in the file, plus the host of every enabled
+# remote service.
+current_env = read_env_file()
+no_proxy = []
+for extra in (os.environ.get("NO_PROXY", "") + "," + os.environ.get("QSR_CALLER_NO_PROXY", "") + "," + os.environ.get("QSR_EXTRA_NO_PROXY", "") + "," + current_env.get("NO_PROXY", "")).split(","):
+    if extra and extra not in no_proxy:
+        no_proxy.append(extra)
+for parsed in enabled_remotes.values():
+    if parsed.hostname and parsed.hostname not in no_proxy:
+        no_proxy.append(parsed.hostname)
+env_updates = {"NO_PROXY": ",".join(no_proxy), "no_proxy": ",".join(no_proxy)}
+
+# Trust-on-first-use for https services, same tradeoff as the container
+# entrypoint: only reasonable on an internal, trusted network. The bundle is
+# system CAs plus the services' current leaf certs. A self-signed service that
+# regenerates its cert on restart needs another setup.sh run.
+user_bundle = current_env.get("SSL_CERT_FILE")
+if user_bundle and Path(user_bundle) != CA_BUNDLE:
+    print(f"[qsr-setup] keeping SSL_CERT_FILE={user_bundle} from {env_path}; not adding service certs")
+else:
+    fetched = []
+    for name, parsed in enabled_remotes.items():
+        if parsed.scheme != "https" or not parsed.hostname:
+            continue
+        try:
+            fetched.append(ssl.get_server_certificate((parsed.hostname, parsed.port or 443), timeout=5.0))
+            print(f"[qsr-setup] trusting current TLS cert for remote MCP '{name}' ({parsed.hostname}:{parsed.port or 443})")
+        except (OSError, ssl.SSLError) as exc:
+            print(f"[qsr-setup] could not fetch TLS cert for '{name}' ({exc}); it may fail verification if self-signed")
+    if fetched:
+        system_ca = [
+            Path(p) for p in (ssl.get_default_verify_paths().cafile, "/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt")
+            if p and Path(p).is_file()
+        ]
+        base = system_ca[0].read_text() if system_ca else ""
+        bundle_text = base + "\n" + "\n".join(fetched)
+        if not CA_BUNDLE.exists() or CA_BUNDLE.read_text() != bundle_text:
+            CA_BUNDLE.write_text(bundle_text)
+        CA_BUNDLE.chmod(0o600)
+        env_updates["SSL_CERT_FILE"] = str(CA_BUNDLE)
+
+update_env_file(env_updates)
+print(f"[qsr-setup] wrote {', '.join(env_updates)} to {env_path}")
+
 # Derive the lean CLI toolset from the ENABLED services only (reachable remote
 # services), so Hermes' heavy default preset never bloats the prompt,
 # new services are picked up automatically, and disabled/dead remotes are not
@@ -479,19 +558,8 @@ temporary.chmod(0o600)
 temporary.replace(config_path)
 PY
 
-    # Persist the loopback proxy bypass so the runtime `hermes` process reaches
-    # OVMS on 127.0.0.1 even when a corporate proxy is set in the shell.
-    local env_file
-    env_file="$config_dir/.env"
-    touch "$env_file"
-    chmod 600 "$env_file"
-    if ! grep -q '^NO_PROXY=' "$env_file" 2>/dev/null; then
-        {
-            echo "NO_PROXY=localhost,127.0.0.1,::1"
-            echo "no_proxy=localhost,127.0.0.1,::1"
-        } >> "$env_file"
-    fi
-
+    # The proxy bypass (loopback, remote MCP hosts) and the service CA bundle are
+    # persisted to $config_dir/.env by the Python block above.
     hermes config migrate >/dev/null </dev/null
     hermes config check </dev/null
 }
@@ -652,11 +720,23 @@ start_operator_ui() {
     [[ "$probe_host" == "0.0.0.0" ]] && probe_host="127.0.0.1"
     local url="http://$probe_host:$QSR_UI_PORT/health"
     local pid current_args current_weather
+    # The agent runtime reads proxy bypass and the service CA bundle from ~/.hermes/.env when it
+    # starts, so a UI started before those changed must be replaced. Only the bundle that
+    # configure_hermes manages is handed to the UI; the harness install stage never sees it.
+    local hermes_dir env_file ca_bundle
+    local -a ui_env=()
+    hermes_dir=$(dirname "$HERMES_CONFIG")
+    env_file="$hermes_dir/.env"
+    ca_bundle="$hermes_dir/remote-mcp-ca-bundle.pem"
+    if grep -qx "SSL_CERT_FILE=$ca_bundle" "$env_file" 2>/dev/null; then
+        ui_env=("SSL_CERT_FILE=$ca_bundle")
+    fi
     pid=$(cat "$pid_file" 2>/dev/null || true)
     if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
         current_weather=$(tr '\0' '\n' </proc/"$pid"/environ 2>/dev/null | sed -n 's/^QSR_WEATHER_MCP_URL=//p' || true)
         if curl -fsS --max-time 2 "$url" >/dev/null 2>&1 &&
-            [[ "$current_weather" == "$WEATHER_MCP_URL" ]]; then
+            [[ "$current_weather" == "$WEATHER_MCP_URL" ]] &&
+            [[ ! "$env_file" -nt "$pid_file" && ! "$ca_bundle" -nt "$pid_file" ]]; then
             log "Operator UI already running (pid $pid, http://$QSR_UI_HOST:$QSR_UI_PORT)"
             return 0
         fi
@@ -675,7 +755,7 @@ start_operator_ui() {
     QSR_UI_HOST="$QSR_UI_HOST" QSR_UI_PORT="$QSR_UI_PORT" \
         QSR_WEATHER_MCP_URL="$WEATHER_MCP_URL" \
         QSR_ADVISOR_BASE_URL="http://127.0.0.1:$OVMS_PORT/v3" QSR_ADVISOR_MODEL="$SERVED_MODEL" \
-        nohup "$MCP_VENV_PY" -u "$ui" > "$log_file" 2>&1 &
+        nohup env ${ui_env[@]+"${ui_env[@]}"} "$MCP_VENV_PY" -u "$ui" > "$log_file" 2>&1 &
     echo $! > "$pid_file"
     if ! wait_for_operator_ui "$url" "$pid_file"; then
         pid=$(cat "$pid_file" 2>/dev/null || true)

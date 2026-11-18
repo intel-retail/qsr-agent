@@ -10,7 +10,7 @@
 | `qsr-agent` stays `starting` for several minutes | The model is loading and warming up on the GPU. Follow progress with `make logs`. |
 | `ovms` restarts repeatedly | Check `docker compose logs ovms`. Common causes are insufficient GPU memory and a GPU device the container cannot access. |
 | Agent cannot reach the model | Check `docker compose logs ovms`; the model must be loaded. With the `router` profile, also check `docker compose logs inference-router`: the router must list `MODEL_ID` as available and be healthy (`make ps`). |
-| Host install (`scripts/setup.sh`): `agent-harness-install-ovms` restarts with `source_model parameter is required` | The harness runs OVMS with `--config_path`, which rejects model flags. Leave `HARNESS_OVMS_EXTRA_ARGS` empty; the tool-call parser is set through `HARNESS_OVMS_TOOL_PARSER` (default `hermes3`), which the harness writes into the model's `graph.pbtxt`. |
+| Host install (`scripts/setup.sh`): `agent-harness-install-ovms` restarts with `source_model parameter is required` | The harness runs OVMS with `--config_path`, which rejects model flags. Leave `HARNESS_OVMS_EXTRA_ARGS` empty; OVMS picks the tool-call parser from the model's chat template. |
 | Settings changes have no effect | Edit `.env.example`, not `.env`. `make up` overwrites `.env`. |
 | Image pull fails | Check registry access and proxy settings, or build locally with `make up REGISTRY=false`. |
 | Build fails with `failed to download pinned uv ... (curl 60)` | A proxy node intercepts GitHub downloads. See [Builds Behind a Proxy](get-started/build-from-source.md#builds-behind-a-proxy). |
@@ -22,7 +22,7 @@
 | A service shows as unavailable in **Connected apps** | Confirm the service is running and its URL is reachable from the agent container. Use `host.docker.internal`, not `127.0.0.1`, for services on the same machine. |
 | A remote service is unreachable behind a proxy | Add the service host to `QSR_EXTRA_NO_PROXY` in `.env.example`, then run `make up`. |
 | An HTTPS service fails after it restarted | The service may have generated a new certificate. Run `make restart`. |
-| Host install (`scripts/setup.sh`): an HTTPS service is enabled but has no tools, and `~/.hermes/logs/agent.log` shows `CERTIFICATE_VERIFY_FAILED` | The host install does not trust self-signed certificates automatically. Follow [HTTPS Services on a Host Install](get-started/configuration.md#https-services-on-a-host-install). |
+| Host install (`scripts/setup.sh`): an HTTPS service has no tools, and `~/.hermes/logs/agent.log` shows `CERTIFICATE_VERIFY_FAILED` | The service regenerated its self-signed certificate, or `~/.hermes/.env` sets your own `SSL_CERT_FILE`. Rerun `scripts/setup.sh`; see [Remote Services on a Host Install](get-started/configuration.md#remote-services-on-a-host-install). |
 | Changes to `agent-config/` or `qsr-skills/` are ignored | Run `make restart`. |
 | A remote service stops answering after it restarted | The agent keeps its MCP session. Run `make restart`. |
 | A remote service is reachable again but still shows as unavailable | After repeated failures the agent parks the connection and retries every five minutes. Run `make restart` to reconnect now. If its port accepts connections but MCP requests time out, restart the service on its host. |
