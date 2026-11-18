@@ -4,8 +4,9 @@
 #
 # Hermes installer revision used by this repo: the installer script at the commit tagged
 # v0.23.0 (the release intel/qsr-agent:2026.3.0-rc1 ships), with its SHA-256.
-# The image build (install-hermes.sh) and the host install (setup.sh, which sets the same values
-# in the agent-harness-install checkout) both install exactly this release, verified by SHA-256.
+# The image build (install-hermes.sh) and the host install (setup.sh, which passes the same values
+# to agent-harness-install as HERMES_PINNED_COMMIT/HERMES_PINNED_SHA256) both install exactly this
+# release, verified by SHA-256.
 # Override both together (HERMES_INSTALL_COMMIT + HERMES_INSTALL_SHA256) to adopt another release;
 # HERMES_INSTALL_URL may point at a mirror of the same installer script.
 if [[ -n ${HERMES_INSTALL_COMMIT:-} && -z ${HERMES_INSTALL_SHA256:-} ]] ||

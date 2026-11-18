@@ -34,11 +34,15 @@ HARNESS_OVMS_IMAGE=${HARNESS_OVMS_IMAGE:-openvino/model_server:2026.2-gpu@sha256
 HARNESS_OVMS_CONTAINER=${HARNESS_OVMS_CONTAINER:-agent-harness-install-ovms}
 HARNESS_IR_CONTAINER=${HARNESS_IR_CONTAINER:-agent-harness-install-ir}
 # The harness runs OVMS with --config_path, which rejects model flags such as --tool_parser and
-# --task (the container crash-loops), so leave this empty; enable_tool_calls sets the parser in graph.pbtxt.
+# --task (the container crash-loops), so leave this empty.
 HARNESS_OVMS_EXTRA_ARGS=${HARNESS_OVMS_EXTRA_ARGS:-}
+# Tool-call parser the harness writes into the model's graph.pbtxt. The OVMS image above (2026.2)
+# predates parser auto-detection (OVMS 2026.3), so Hermes gets plain text instead of tool_calls
+# without it. Set to "none" to disable parsing.
+HARNESS_OVMS_TOOL_PARSER=${HARNESS_OVMS_TOOL_PARSER:-hermes3}
 # Set to 1 to accept OVMS running on the CPU (debugging only; the agent is unusably slow).
 ALLOW_CPU_INFERENCE=${ALLOW_CPU_INFERENCE:-0}
-export HARNESS_OVMS_REST_PORT HARNESS_IR_PORT HARNESS_OVMS_EXTRA_ARGS HARNESS_MODELS_DIR HARNESS_OVMS_IMAGE HARNESS_OVMS_CONTAINER HARNESS_IR_CONTAINER
+export HARNESS_OVMS_REST_PORT HARNESS_IR_PORT HARNESS_OVMS_EXTRA_ARGS HARNESS_OVMS_TOOL_PARSER HARNESS_MODELS_DIR HARNESS_OVMS_IMAGE HARNESS_OVMS_CONTAINER HARNESS_IR_CONTAINER
 ROUTER_URL=http://127.0.0.1:$HARNESS_IR_PORT/v1
 # The Router matches model names exactly and serves the Hugging Face id without its org prefix.
 SERVED_MODEL=${MODEL_ID##*/}
@@ -110,6 +114,7 @@ Optional environment variables:
     HARNESS_IR_PORT     Loopback port for the Inference Router (default: 4445)
     HARNESS_OVMS_IMAGE  OVMS image (default: the digest-pinned image docker-compose.yaml uses)
     HARNESS_OVMS_EXTRA_ARGS  Extra OVMS server flags (default: none; model flags are rejected in config mode)
+    HARNESS_OVMS_TOOL_PARSER  Tool-call parser written into the model's graph.pbtxt (default: hermes3; none disables)
     HARNESS_MODELS_DIR  Where the harness stores OVMS models (default: MODEL_ROOT, or an existing
                         export under ~/.agent-harness-install/models from an earlier version)
     HARNESS_OVMS_CONTAINER  OVMS container name (default: agent-harness-install-ovms)
@@ -297,7 +302,7 @@ install_inference_and_hermes() {
     # Installs Docker/Node prerequisites, OVMS and the Inference Router in Docker, and
     # Hermes; it only prints how to configure Hermes, which configure_hermes below does.
     # stdin is closed so nothing can read a TTY.
-    pin_hermes_in_harness "$harness"
+    export_hermes_pin
     log "Running agent-harness-install for $MODEL_ID (OVMS, Inference Router, Hermes)"
     bash "$harness/install.sh" --harness hermes --model "$MODEL_ID" --non-interactive </dev/null ||
         fail "agent-harness-install failed; see its output above."
@@ -306,59 +311,16 @@ install_inference_and_hermes() {
     log "Using $(hermes --version | head -n 1)"
 }
 
-# The harness pins Hermes v0.22.2, which predates the gateway API server this repo needs, and its
-# pin variables are plain assignments that the environment cannot override. A custom installer URL
-# would skip the harness's own `--commit`, leaving Hermes unpinned, so set the harness's two pin
-# values to ours (scripts/hermes-pin.sh). It then installs exactly that release, checksum-verified.
-# Upstream fix: open-edge-platform/edge-ai-libraries#3935 makes the pin environment-overridable
-# (HERMES_PINNED_COMMIT/HERMES_PINNED_SHA256); once HARNESS_INSTALL_REF includes it, export those
-# two variables instead and delete this function. Both greps below fail the run if the harness
-# changes shape before then.
-pin_hermes_in_harness() {
-    local agents="$1/scripts/lib/agents.sh" commit sha
-    commit=$(source "$ROOT_DIR/scripts/hermes-pin.sh" && printf '%s' "$HERMES_INSTALL_COMMIT")
-    sha=$(source "$ROOT_DIR/scripts/hermes-pin.sh" && printf '%s' "$HERMES_INSTALL_SHA256")
-    [[ $commit =~ ^[0-9a-f]{40}$ && $sha =~ ^[0-9a-f]{64}$ ]] ||
-        fail "HERMES_INSTALL_COMMIT must be a 40-character SHA and HERMES_INSTALL_SHA256 a 64-character SHA-256."
-    grep -q '^HERMES_PINNED_COMMIT=' "$agents" && grep -q '^HERMES_PINNED_SHA256=' "$agents" ||
-        fail "Hermes pin variables not found in $agents; update scripts/fetch-harness.sh and pin_hermes_in_harness together."
-    sed -i -e "s|^HERMES_PINNED_COMMIT=.*|HERMES_PINNED_COMMIT=\"$commit\"|" \
-        -e "s|^HERMES_PINNED_SHA256=.*|HERMES_PINNED_SHA256=\"$sha\"|" "$agents"
-    grep -q "^HERMES_PINNED_COMMIT=\"$commit\"\$" "$agents" || fail "Could not pin Hermes in $agents."
-    log "Hermes pinned to installer commit ${commit:0:12}"
-}
-
-# Hermes needs OpenAI-style tool calls, which OVMS only parses when graph.pbtxt names a tool
-# parser. The harness-generated graph has none, so add it and restart OVMS to reload it.
-# The harness documents HARNESS_OVMS_EXTRA_ARGS="--tool_parser ..." for this, but that is a
-# per-model option OVMS rejects under --config_path (crash loop). Upstream fix:
-# open-edge-platform/edge-ai-libraries#3935 adds HARNESS_OVMS_TOOL_PARSER, which writes the
-# parser into graph.pbtxt before the OVMS restart; once HARNESS_INSTALL_REF includes it, export
-# HARNESS_OVMS_TOOL_PARSER=hermes3 and reduce this function to wait_for_ovms_model.
-enable_tool_calls() {
-    local base_path graph
-    # The harness exporters register the model with a flat (<name>) or org-prefixed (<org>/<name>)
-    # base_path; config.json is the only place that records which one was used.
-    base_path=$(SERVED_MODEL="$SERVED_MODEL" python3 - "$HARNESS_MODELS_DIR/config.json" <<'PY'
-import json, os, sys
-name = os.environ["SERVED_MODEL"]
-for entry in json.load(open(sys.argv[1])).get("model_config_list", []):
-    config = entry.get("config", {})
-    if config.get("name") == name:
-        print(config.get("base_path", ""))
-        break
-PY
-    ) || fail "Could not read $HARNESS_MODELS_DIR/config.json."
-    [[ -n $base_path ]] || fail "Model $SERVED_MODEL is not registered in $HARNESS_MODELS_DIR/config.json."
-    graph="$HARNESS_MODELS_DIR/$base_path/graph.pbtxt"
-    [[ -f $graph ]] || fail "OVMS graph not found at $graph."
-    if ! grep -q 'tool_parser' "$graph"; then
-        log "Enabling tool calls (tool_parser hermes3) in $graph"
-        sed -i '/models_path:/a\            tool_parser: "hermes3",' "$graph"
-        grep -q 'tool_parser' "$graph" || fail "Could not add tool_parser to $graph."
-        docker restart "$HARNESS_OVMS_CONTAINER" >/dev/null || fail "Could not restart $HARNESS_OVMS_CONTAINER."
-    fi
-    wait_for_ovms_model
+# The harness installs the Hermes release named by HERMES_PINNED_COMMIT/HERMES_PINNED_SHA256 (both
+# required together; it verifies the installer's SHA-256 and checks out that commit). Pass ours
+# from scripts/hermes-pin.sh so the host install and the container image ship the same release.
+export_hermes_pin() {
+    HERMES_PINNED_COMMIT=$(source "$ROOT_DIR/scripts/hermes-pin.sh" && printf '%s' "$HERMES_INSTALL_COMMIT") ||
+        fail "Could not read the Hermes pin from scripts/hermes-pin.sh."
+    HERMES_PINNED_SHA256=$(source "$ROOT_DIR/scripts/hermes-pin.sh" && printf '%s' "$HERMES_INSTALL_SHA256") ||
+        fail "Could not read the Hermes pin from scripts/hermes-pin.sh."
+    export HERMES_PINNED_COMMIT HERMES_PINNED_SHA256
+    log "Hermes pinned to installer commit ${HERMES_PINNED_COMMIT:0:12}"
 }
 
 wait_for_ovms_model() {
@@ -797,7 +759,7 @@ main() {
         ensure_build_packages
         ensure_helper_venv
         install_inference_and_hermes
-        enable_tool_calls
+        wait_for_ovms_model
         wait_for_router
         warm_up_model
         ensure_mcp_venv
