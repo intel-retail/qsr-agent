@@ -16,7 +16,8 @@ x-proxy-env: &proxy-env
 
 services:
   ovms:
-    image: openvino/model_server:${OVMS_IMAGE_TAG:-2026.2-gpu}
+    # Pinned by digest (openvino/model_server:2026.2-gpu); the host install runs the same image.
+    image: ${OVMS_IMAGE:-openvino/model_server:2026.2-gpu@sha256:fdc34725b35d79cde23cff1967f90efb40237b7cf5545a70460209056f3da733}
     command:
       - --rest_port
       - "8000"
@@ -50,6 +51,37 @@ services:
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     group_add:
       - "${RENDER_GID:-992}"
+    restart: unless-stopped
+    networks:
+      - qsr
+
+  # Optional Inference Router in front of OVMS (the same router agent-harness-install
+  # deploys on a host install). Enable with COMPOSE_PROFILES=router and
+  # QSR_MODEL_BASE_URL=http://inference-router:8000/v1 in .env.example; by default
+  # the agent calls OVMS directly and this ~3 GB image is not pulled.
+  inference-router:
+    profiles:
+      - router
+    image: ${IR_IMAGE:-intel/inference-router:2026.2.0@sha256:2acb688b9a45d9d93ec0df4e5713a0d1120ebf23f9a7ebb71ca4253c70848dc6}
+    environment:
+      <<: *proxy-env
+      GATEWAY_CONFIG: /app/config.yaml
+      IR_DEVICE: CPU
+      MODEL_ID: ${MODEL_ID:?Set MODEL_ID in .env.example}
+      NO_PROXY: localhost,127.0.0.1,::1,ovms
+      no_proxy: localhost,127.0.0.1,::1,ovms
+    volumes:
+      # Only the config: /app is the image's working directory (telemetry is written there).
+      - ./agent-config/inference-router/config.yaml:/app/config.yaml:ro
+    depends_on:
+      ovms:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     restart: unless-stopped
     networks:
       - qsr
@@ -89,17 +121,24 @@ services:
       dockerfile: Dockerfile
       args:
         <<: *proxy-build-args
-        HERMES_INSTALL_URL: ${HERMES_INSTALL_URL:-https://hermes-agent.nousresearch.com/install.sh}
         HERMES_INSTALL_COMMIT: ${HERMES_INSTALL_COMMIT:-}
+        HERMES_INSTALL_SHA256: ${HERMES_INSTALL_SHA256:-}
+        HERMES_INSTALL_URL: ${HERMES_INSTALL_URL:-}
     depends_on:
       ovms:
         condition: service_started
+      # Only waited for when the `router` profile is active.
+      inference-router:
+        condition: service_healthy
+        required: false
       weather:
         condition: service_healthy
     environment:
       <<: *proxy-env
       MODEL_ID: ${MODEL_ID:?Set MODEL_ID in .env.example}
-      QSR_MODEL_BASE_URL: http://ovms:8000/v3
+      # Hermes calls OVMS directly unless the `router` profile is enabled (see inference-router).
+      # The scope check and advisor always call OVMS directly.
+      QSR_MODEL_BASE_URL: ${QSR_MODEL_BASE_URL:-http://ovms:8000/v3}
       QSR_ADVISOR_BASE_URL: http://ovms:8000/v3
       QSR_UI_HOST: 0.0.0.0
       QSR_UI_PORT: "8600"
@@ -130,8 +169,8 @@ services:
       # ranges — remote MCP services (e.g. SAD on a 10.x host) are reached direct.
       # Python ignores CIDR entries, so LAN hosts it calls must be listed by IP
       # in QSR_EXTRA_NO_PROXY (comma-separated).
-      NO_PROXY: localhost,127.0.0.1,::1,ovms,weather,host.docker.internal,${QSR_EXTRA_NO_PROXY:-},10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.intel.com
-      no_proxy: localhost,127.0.0.1,::1,ovms,weather,host.docker.internal,${QSR_EXTRA_NO_PROXY:-},10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.intel.com
+      NO_PROXY: localhost,127.0.0.1,::1,ovms,inference-router,weather,host.docker.internal,${QSR_EXTRA_NO_PROXY:-},10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.intel.com
+      no_proxy: localhost,127.0.0.1,::1,ovms,inference-router,weather,host.docker.internal,${QSR_EXTRA_NO_PROXY:-},10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.intel.com
     ports:
       - "${QSR_UI_HOST:-0.0.0.0}:${QSR_UI_PORT:-8600}:8600"
     volumes:

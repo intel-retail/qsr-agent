@@ -32,6 +32,9 @@ See [Connect Store Services](#connect-store-services) and
 | `QSR_UI_HOST` | `0.0.0.0` | Interface the operator UI listens on. Use `127.0.0.1` for local-only access |
 | `QSR_UI_PORT` | `8600` | Operator UI port |
 | `OVMS_PORT` | `4444` | Host port for the model server API (loopback only) |
+| `OVMS_IMAGE` | `openvino/model_server:2026.2-gpu@sha256:…` | Model server image, pinned by digest; the host install runs the same image |
+| `COMPOSE_PROFILES` | empty | Set to `router` to also run the Inference Router container in front of the model server (the host install always runs it). Set `QSR_MODEL_BASE_URL=http://inference-router:8000/v1` with it |
+| `QSR_MODEL_BASE_URL` | `http://ovms:8000/v3` | Endpoint the agent runtime sends model requests to |
 | `WEATHER_PORT` | `8090` | Host port for the weather service (loopback only) |
 | `HERMES_TIMEOUT` | `300` | Seconds to wait for one agent answer |
 | `QSR_EXTRA_NO_PROXY` | empty | Comma-separated LAN hosts the agent must reach without the proxy |
@@ -115,6 +118,34 @@ agent keeps working with the services it can reach.
 After editing the file, run `make restart`. Self-signed HTTPS certificates on
 service endpoints are trusted automatically each time the agent starts. If a
 service regenerates its certificate, restart the agent.
+
+### HTTPS Services on a Host Install
+
+The host install (`scripts/setup.sh`) does not trust self-signed certificates
+automatically. An HTTPS service with one is enabled but registers no tools, and
+`~/.hermes/logs/agent.log` shows `CERTIFICATE_VERIFY_FAILED`. Trust its current
+certificate yourself, on a trusted network only, and point the whole agent
+process tree at a bundle that keeps the system CAs. `<URL_VARIABLE>` is the
+service's variable from the table above. The system CA bundle path shown is
+Debian's and Ubuntu's; other distributions keep it elsewhere (for example
+`/etc/pki/tls/certs/ca-bundle.crt` on Fedora and RHEL):
+
+```bash
+HOST=10.0.0.5; PORT=5000
+openssl s_client -connect "$HOST:$PORT" -servername "$HOST" </dev/null 2>/dev/null \
+  | openssl x509 > /tmp/service.crt
+cat /etc/ssl/certs/ca-certificates.crt /tmp/service.crt > ~/.hermes/remote-mcp-ca-bundle.pem
+chmod 600 ~/.hermes/remote-mcp-ca-bundle.pem
+echo "SSL_CERT_FILE=$HOME/.hermes/remote-mcp-ca-bundle.pem" >> ~/.hermes/.env
+kill "$(cat /tmp/qsr-operator-ui.pid)"   # setup.sh keeps a healthy UI, so stop it first
+SSL_CERT_FILE=$HOME/.hermes/remote-mcp-ca-bundle.pem <URL_VARIABLE>=https://$HOST:$PORT/mcp \
+  scripts/setup.sh
+```
+
+The `SSL_CERT_FILE` export must be set when `setup.sh` starts the operator UI,
+because the UI launches the agent runtime that opens the MCP connections.
+Repeat these steps whenever the service regenerates its certificate; some
+services do so on every restart.
 
 ## Send Events From Store Systems
 
