@@ -38,7 +38,8 @@ QSR_EXTRA_NO_PROXY=<kiosk-host>
 ```
 
 See [Connect Store Services](get-started/configuration.md#connect-store-services).
-Without service URLs the agent runs with weather only.
+Without service URLs the agent runs with weather only. To change the URLs
+later, edit `.env.example` and run `make up` again.
 
 ## Step 4: Start the Agent
 

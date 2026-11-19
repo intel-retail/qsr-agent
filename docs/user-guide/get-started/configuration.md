@@ -10,6 +10,9 @@ so changes made directly to `.env` are overwritten.
 | `.env.example` | `make up` |
 | `agent-config/hermes/*.yaml` or `qsr-skills/` | `make restart` |
 
+`make restart` restarts the agent with its current settings. It does not apply
+`.env.example` changes, including service URLs; use `make up` for those.
+
 ## Settings You Must Change
 
 | Where | Setting | Why |
@@ -94,7 +97,7 @@ mcp_servers:
 - **Disable a service:** set `enabled: false`.
 
 The preconfigured entries read their URLs from `.env.example`. Leave a URL
-empty to skip that service:
+empty to skip that service. After changing a URL, run `make up`:
 
 | Service | Purpose | Setting |
 | --- | --- | --- |
@@ -112,9 +115,10 @@ empty to skip that service:
 Services that are not running appear as unavailable in **Connected apps**. The
 agent keeps working with the services it can reach.
 
-After editing the file, run `make restart`. Self-signed HTTPS certificates on
-service endpoints are trusted automatically each time the agent starts. If a
-service regenerates its certificate, restart the agent.
+After editing `agent-config/hermes/remote-mcp.example.yaml`, run
+`make restart`. Self-signed HTTPS certificates on service endpoints are trusted
+automatically each time the agent starts. If a service regenerates its
+certificate, run `make restart`.
 
 ## Send Events From Store Systems
 
