@@ -29,11 +29,11 @@ ran next to the agent.
 
 | Service | Endpoint | Tools | Result |
 |---|---|---|---|
-| Kiosk | `10.223.23.74:8014` | 13 | Q&A and settings actions pass |
-| Order Accuracy take-away / dine-in | `10.223.23.34:8010` / `:8011` | 6 / 6 | Q&A pass; host went offline mid-run, MCP did not answer after it returned |
-| Digital signage | `https://10.49.88.101:5000` (self-signed) | 7 | Q&A pass |
-| Suspicious activity | `10.223.22.84:9000` | 9 | Q&A pass |
-| Store activity / table occupancy / footfall | `10.49.88.101:3101` / `:3201` / `:3301` | 8 / 7 / 4 | Q&A pass after skill fixes |
+| Kiosk | `<kiosk-host>:8014` | 13 | Q&A and settings actions pass |
+| Order Accuracy take-away / dine-in | `<order-accuracy-host>:8010` / `:8011` | 6 / 6 | Q&A pass; host went offline mid-run, MCP did not answer after it returned |
+| Digital signage | `https://<signage-host>:5000` (self-signed) | 7 | Q&A pass |
+| Suspicious activity | `<sad-host>:9000` | 9 | Q&A pass |
+| Store activity / table occupancy / footfall | `<edgemart-host>:3101` / `:3201` / `:3301` | 8 / 7 / 4 | Q&A pass after skill fixes |
 | Weather (local) | compose `weather` | 2 | Q&A and events pass |
 
 Results:
@@ -71,9 +71,9 @@ Only weather ran next to the agent.
 
 | Service | Endpoint | Version |
 |---|---|---|
-| Kiosk | `http://10.223.23.74:8014/mcp` | voice-enabled-interactions `511586e`, 13 tools |
-| Take-away | `http://10.223.23.34:8010/mcp` | order-accuracy `1a65b873`, 6 tools |
-| Dine-in | `http://10.223.23.34:8011/mcp` | order-accuracy `1a65b873`, 6 tools |
+| Kiosk | `http://<kiosk-host>:8014/mcp` | voice-enabled-interactions `511586e`, 13 tools |
+| Take-away | `http://<order-accuracy-host>:8010/mcp` | order-accuracy `1a65b873`, 6 tools |
+| Dine-in | `http://<order-accuracy-host>:8011/mcp` | order-accuracy `1a65b873`, 6 tools |
 
 ### Chat (Live)
 
@@ -145,7 +145,7 @@ The sample kiosk history now has the real kiosk event and context fields
 
 ### Digital Signage (remote, plug and play)
 
-`QSR_DIGITAL_SIGNAGE_MCP_URL=https://10.49.88.101:5000/mcp` and its host in
+`QSR_DIGITAL_SIGNAGE_MCP_URL=https://<signage-host>:5000/mcp` and its host in
 `QSR_EXTRA_NO_PROXY`. On start the agent trusted the service's self-signed
 certificate and discovered 7 tools without code changes.
 
