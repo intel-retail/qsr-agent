@@ -20,6 +20,10 @@ class StaleContextError(ValueError):
     pass
 
 
+# An approved proposal older than this is not executed; the operator submits a fresh event instead.
+APPROVAL_LIMIT_SECONDS = 300
+
+
 def parse_event_response(response: str) -> Any:
     decoder = json.JSONDecoder()
     payload, position = decoder.raw_decode(response)
@@ -42,6 +46,11 @@ class Skill:
     tools: tuple[str, ...]
     # Non-empty only for learned skills: the event types their sections cover.
     events: tuple[str, ...] = ()
+    # Built-in skills: the only event types the skill is offered for; empty = any event.
+    event_types: tuple[str, ...] = ()
+    # Declared skills: event.data field -> accepted values. An action is refused (no action) unless every
+    # field matches, so a model that misreads the event cannot propose it.
+    action_when: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -180,6 +189,14 @@ class HermesEventAgent:
             raise ValueError("event restaurant does not match this deployment")
         if self.refresh_skills:
             self.refresh_skills()
+        if not any(self._applies(skill, event) for skill in self.catalog.skills.values()):
+            # No model call: there is no guidance the model could load for this event.
+            return PolicyEvaluation(False, decision={
+                "event_id": event["event_id"], "event_type": event["event_type"], "event_data": event["data"],
+                "decision_source": "catalog", "skills": [], "reads": [], "observations": {},
+                "summary": f"No registered skill covers {event['event_type']} events; no action.",
+                "evaluated_at": time.time(),
+            })
         selected: dict[str, str] = {}
         for skill in self.catalog.skills.values():
             if event.get("event_type") in skill.events:
@@ -220,6 +237,8 @@ class HermesEventAgent:
                     for name in names:
                         if name not in self.catalog.skills:
                             raise ValueError(f"unknown skill: {name}")
+                        if not self._applies(self.catalog.skills[name], event):
+                            raise ValueError(f"{name} does not apply to {event['event_type']} events")
                         selected[name] = self._skill_text(self.catalog.skills[name], event["event_type"])
                     allowed = self._allowed(selected)
                     for call in reads:
@@ -276,6 +295,23 @@ class HermesEventAgent:
                 name = self._resolve_tool(action["tool"], selected)
                 if not isinstance(name, str) or name not in self._allowed(selected):
                     raise ValueError("action is not permitted by selected skills")
+                refused = self._action_guard(event, selected, name)
+                if refused:
+                    evidence.update(summary=refused, model_summary=decision["summary"], guard="action_when")
+                    return PolicyEvaluation(False, decision=evidence)
+                missing = [read for read in self.catalog.tools[name].required_reads if read not in observations]
+                if missing:
+                    # Required context reads are side-effect free, so fetch them rather than reject repeatedly.
+                    for required in missing:
+                        observations[required] = self.catalog.read(required, {})
+                        read_arguments[required] = {}
+                        trace.append({"tool": required, "arguments": {}})
+                    feedback = (
+                        f"The proposed {name} needs live context that had not been read: {', '.join(missing)}. "
+                        "It is now in observations. Reassess the action using it; the previous recommendation "
+                        "has not been accepted."
+                    )
+                    continue
                 learned = self._learned_matches(event, selected, observations).get(name)
                 if learned and isinstance(action["arguments"], dict):
                     # Operator-approved learned settings are applied even when the model omits some.
@@ -294,6 +330,16 @@ class HermesEventAgent:
                     for required in self.catalog.tools[name].required_reads:
                         observations[required] = self.catalog.read(required, read_arguments[required])
                         trace.append({"tool": required, "arguments": read_arguments[required]})
+                    try:
+                        self.catalog.validate_action(name, action["arguments"], observations)
+                    except StaleContextError as error:
+                        services = ", ".join(sorted(self.catalog.tools[name].required_reads))
+                        raise RuntimeError(
+                            f"{services} returned a snapshot that is already stale ({error}); the service host's "
+                            "clock is probably behind the agent's. Synchronize the clocks (NTP)."
+                        ) from error
+                    except ValueError:
+                        pass  # reported to the model on the next round
                     feedback = (
                         "The previous evidence expired during assessment. Required MCP snapshots "
                         "have been refreshed. Reassess the action using these new observations; "
@@ -321,6 +367,24 @@ class HermesEventAgent:
 
     def _allowed(self, selected: dict[str, str]) -> set[str]:
         return {tool for name in selected for tool in self.catalog.skills[name].tools}
+
+    def _action_guard(self, event: dict[str, Any], selected: dict[str, str], tool: str) -> str | None:
+        """Why a selected skill refuses `tool` for this event, or None when its action_when fields all match."""
+        data = event.get("data") or {}
+        for name in selected:
+            skill = self.catalog.skills[name]
+            if tool not in skill.tools:
+                continue
+            for field, values in skill.action_when:
+                actual = data.get(field)
+                if not isinstance(actual, str) or actual not in values:
+                    return (f"{field} is {actual!r}; {name} allows {tool.split('.', 1)[-1]} only when "
+                            f"{field} is {' or '.join(values)}; no action.")
+        return None
+
+    @staticmethod
+    def _applies(skill: Skill, event: dict[str, Any]) -> bool:
+        return not skill.event_types or event.get("event_type") in skill.event_types
 
     @staticmethod
     def _skill_text(skill: Skill, event_type: str) -> str:
@@ -384,7 +448,7 @@ class HermesEventAgent:
     ) -> str:
         catalog = [
             {"name": skill.name, "description": skill.description, "tools": skill.tools}
-            for skill in self.catalog.skills.values()
+            for skill in self.catalog.skills.values() if self._applies(skill, event)
         ]
         tools = [
             {"name": name, "description": tool.description, "read_only": tool.read_only,
@@ -468,7 +532,7 @@ class HermesEventAgent:
 
     def execute_approved(self, proposal: dict[str, Any]) -> dict[str, Any]:
         evidence = proposal["evidence"]
-        if time.time() - evidence.get("evaluated_at", 0) > 300:
+        if time.time() - evidence.get("evaluated_at", 0) > APPROVAL_LIMIT_SECONDS:
             raise ValueError("proposal expired; submit a fresh event")
         selected = {name: "" for name in evidence.get("skills", []) if name in self.catalog.skills}
         name, arguments = proposal["tool"], proposal["arguments"]

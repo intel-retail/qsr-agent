@@ -1,6 +1,6 @@
 ---
 name: table-management
-description: "Answer table occupancy, utilization, and dirty-table questions, and safely mark tables occupied/cleared, using the EdgeMart table-sim-service MCP service."
+description: "Answer table occupancy, utilization, and dirty-table questions, and safely mark tables occupied/cleared, using the EdgeMart table-occupancy-service MCP service."
 version: 1.0.0
 platforms: [linux]
 metadata:
@@ -10,7 +10,7 @@ metadata:
 
 # Table Management
 
-Use the `edgemart-table-sim-service` MCP service as the source of table
+Use the `table-occupancy-service` MCP service as the source of table
 occupancy/cleaning facts. It tracks only the table lifecycle (occupied, dirty,
 cleared) — it has no customer or order context; use the `cafe-operations`
 skill for those.
@@ -20,7 +20,7 @@ skill for those.
 | User intent or question | Tool | Fields to use | Answer rule |
 |---|---|---|---|
 | How utilized is a table / are tables | `get_utilization` | `tables[].ref`, `occupied_seconds`, `cycles`, `utilization` | Pass `table_ref` to scope to one table; omit for all tables. State the period used. |
-| How long do tables sit dirty before cleaning | `get_dirty_duration_stats` | `overall`/`by_table` `count`, `avg_seconds`, `min_seconds`, `max_seconds` | A table still dirty right now is included, measured up to now — note this if relevant. |
+| How long do tables sit dirty before cleaning | `get_dirty_duration_stats` | `overall`/`by_table` `count`, `avg_seconds`, `min_seconds`, `max_seconds` | `count` is the number of dirty episodes, not tables. A table still dirty right now is included, measured up to now — note this if relevant. |
 | Full history for one specific table | `get_table_history` | `event_type`, `occurred_at`, `payload` | `table_ref` is required. Most recent first; state how many rows were returned vs. the `limit`. |
 | Which tables are dirty right now | *(no single tool covers this — see note below)* | — | Call `get_table_history` per table and check the latest `event_type`, or state the limitation. |
 | List known event types | `list_event_types` | `event_type`, `description` | — |

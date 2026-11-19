@@ -3,8 +3,9 @@
 The operator UI serves a small HTTP API on port `8600`. All request and
 response bodies are JSON unless noted. Request bodies are limited to 64 KiB.
 
+> [!IMPORTANT]
 > The API has no built-in authentication. Restrict network access as described
-> in [Configuration](get-started/configuration.md#secure-network-access).
+> in [Configuration](./get-started/configuration.md#secure-network-access).
 
 ## Health
 
@@ -47,7 +48,7 @@ cached briefly. Use `GET /status?force=1` to recheck now.
 Asks the agent a question and streams the answer as Server-Sent Events.
 
 | Field | Type | Required | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `question` | string | Yes | Up to 4000 characters |
 | `event_id` | string | No | Links the question to an event shown in **Autonomy Decisions** |
 
@@ -80,13 +81,13 @@ Submits a store event for the agent to evaluate. Returns `202` immediately. The
 evaluation runs in the background.
 
 | Field | Type | Required | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `event_id` | string | Yes | Unique ID, up to 200 characters. Resending an ID that was already processed is ignored. Resend a failed ID to retry it |
 | `event_type` | string | Yes | Any descriptive name, for example `queue_count_changed` |
-| `service` | string | No | Name of the producing service. Needed for the agent to learn from operator responses to this event |
-| `store_id` | string | No | Store identifier |
+| `service` | string | No | Name of the producing service, used to learn from operator responses. If missing, it is taken from `event_type` (built-in types, or `QSR_EVENT_SERVICES`) |
+| `store_id` | string | No | Store identifier. If set, must equal the agent's `QSR_RESTAURANT_ID` (default `qsr-001`) |
 | `occurred_at` | string | No | ISO 8601 timestamp |
-| `data` | object | No | Event details |
+| `data` | object | No | Event details. When several MCP servers back one service, `data.venue` names the server that owns the event; chat actions on the event go to that server |
 
 The whole event must be under 32 KiB.
 
@@ -119,7 +120,7 @@ Returns the event queue and recent decisions. Decision states are `queued`,
 Approves or rejects a pending proposal. Optional body:
 
 | Field | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `reason` | string | Up to 500 characters. Recorded for learning |
 
 Returns `404` if the proposal does not exist, and `409` if it has expired or
@@ -142,3 +143,31 @@ or `409` if the service is not ready or learning is already running.
 ### `POST /learning/pending/{id}/reject`
 
 Approves or rejects learned rules that are waiting for review.
+
+### `POST /learning/responses`
+
+Records an operator response that a service observed itself, for example an
+action the operator took on the service's own screen. Returns `201` with the
+record ID.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `event_id` | string | One of | An event already sent to `POST /autonomy/events` |
+| `event` | object | One of | The full event (same fields as `POST /autonomy/events`) when the agent never received it |
+| `kind` | string | No | `instruction` (default), `approved`, `rejected`, or `none` |
+| `text` | string | No | What the operator said or the reason, up to 1000 characters |
+| `tool_calls` | array | No | Up to 10 `{"tool": "<service.action>", "arguments": {...}}` naming action tools of a connected MCP service |
+| `response_id` | string | No | Idempotency key; resending the same ID adds nothing |
+
+An `instruction` needs `text` or `tool_calls`. Returns `404` for an unknown
+`event_id` without `event`, and `400` for unregistered tools or invalid fields.
+
+```bash
+curl -X POST http://localhost:8600/learning/responses \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "event_id": "evt-0001",
+    "tool_calls": [{"tool": "<service>.<action>", "arguments": {}}],
+    "response_id": "evt-0001-response"
+  }'
+```

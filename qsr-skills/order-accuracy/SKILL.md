@@ -24,10 +24,8 @@ format — registered as distinct MCP servers:
 
 Before the first order-accuracy tool call in a conversation for a given
 service, call `describe`. Use the returned contract to identify the current
-read tools, input schemas, and event types for that service — Order Accuracy
-is sensor-only, so `describe` should report no action tools; if it ever does,
-treat that as a live signal and re-derive routing from it rather than from
-this file. Do not use `describe` as evidence for live accuracy facts.
+read tools, action tools, input schemas, and event types for that service.
+Do not use `describe` as evidence for live accuracy facts.
 
 Map each request to the required capability below, then choose the compatible
 tool from `describe`. If no compatible tool is available, explain that the
@@ -39,14 +37,25 @@ Always call the service that matches the venue format implied by the question
 both services are registered, ask which one, or call both and label each
 result by service.
 
-If a question implies taking an action (remake, comp, alert dismissal), check
-`describe` first; if no compatible action tool is available, explain that
-Order Accuracy can only report data and does not support that action.
+## Remakes
+
+Each service can remake only its own flagged orders with `request_remake`
+(`order_id`, `reason`). Route it to the service that owns the order:
+
+* An event's `data.venue` names it: `take-away` → `order-accuracy-take-away`,
+  `dine-in` → `order-accuracy-dine-in`.
+* Otherwise call `get_order_accuracy_context` on each service and use the one
+  whose `recent_orders` lists the order with `result: flagged`.
+
+If a service answers that the order is not one of its flagged orders, try the
+other service before reporting failure. Comps and alert dismissal are not
+supported; say so.
 
 ## Capability Routing
 
 | User intent or question | Required capability | Fields to use | Answer rule |
 |---|---|---|---|
+| Orders flagged right now, what was wrong, accuracy in the last 30 minutes | `get_order_accuracy_context` on each service | `summary` (`window_minutes`, `orders_flagged`, `accuracy_rate`), `recent_orders` (`order_id`, `station_id`, `result`, `issues`, `venue`, `observed_at`) | `summary` covers the last `window_minutes`; `recent_orders` are the latest orders and can be older, so for "now" or "last N minutes" list only orders whose `observed_at` is inside the window and say when there are none. Only `result: flagged` orders are failures. Report each order's own `issues` and label it with its service. |
 | Current or comparative rework/reject rate | Retrieve the rework rate for a period, optionally filtered by station, compared against a baseline period | period, station, orders seen, orders failed, rework rate, baseline period, baseline rework rate, baseline orders seen, delta vs. baseline | Report the rate as a percentage for the requested period; include the baseline comparison and delta only if the user asked for or implied a comparison. |
 | Recent order validation history / recent mismatches | Retrieve order validation history (validated/failed events), oldest first | event type, status, order id, station, timestamp, accuracy score, missing items, extra items, quantity mismatches, reason | List orders in the order returned; state validated vs. failed and the reason for each failure. Do not invent an order that isn't in the result. |
 | Pass/fail totals by station | Retrieve per-station pass/fail totals and rework rate | station (if provided), validated, failed, total, rework rate | Report validated/failed counts per station; call once per named station if the user asks about specific stations (e.g. T1 and T2), or once with no station filter for an all-station breakdown. |

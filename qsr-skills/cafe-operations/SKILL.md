@@ -1,6 +1,6 @@
 ---
 name: cafe-operations
-description: "Answer café-day questions — customer arrivals/departures, orders, table occupancy, and queue depth — using the EdgeMart sim-service MCP service. Safely handle table-cleared and manual event actions."
+description: "Answer café-day questions — customer arrivals/departures, orders, table occupancy, and queue depth — using the EdgeMart store-activity-service MCP service. Safely handle table-cleared and manual event actions."
 version: 1.0.0
 platforms: [linux]
 metadata:
@@ -10,7 +10,7 @@ metadata:
 
 # Café Operations
 
-Use the `edgemart-sim-service` MCP service as the source of café-day facts:
+Use the `store-activity-service` MCP service as the source of café-day facts:
 customer arrivals/departures, orders, table occupancy, and queue depth. Never
 answer from memory or an earlier turn when a fresh tool call is available.
 
@@ -25,6 +25,16 @@ answer from memory or an earlier turn when a fresh tool call is available.
 | List known event types | `list_event_types` | `event_type`, `description` | Use to explain what this service can report on. |
 | Any other café-operations analysis | `query_history` or `get_current_snapshot` | All returned fields relevant to the question | Call once, reason over the result, show arithmetic briefly, state any missing evidence instead of guessing. |
 
+## Source of Counts
+
+- Order counts and `customer.arrived` / `customer.departed` counts come from this service
+  (`store-activity-service`, `query_history` with `event_type`). A question that asks for orders
+  always needs this tool, even when the `footfall-service` is also used for part of the answer.
+- People counted by zone sensors (entrance, counter, seating) belong to the `footfall-service`
+  (footfall-analytics skill). The two counts are independent and can differ; when both are used,
+  give each figure with its service name instead of merging them.
+- Name the service each figure came from in the answer.
+
 ## Complex Questions
 
 For comparisons, trends, or open-ended questions, call the narrowest tool that
@@ -38,7 +48,7 @@ calls for a two-date comparison). Include the date range used in the answer.
 1. Call `get_current_snapshot` (check the row for the target `ref`) or
    `tail_events` (filtered to events for that `ref`) first to confirm the
    table/ref and its current state — this service has no `get_table_history`
-   tool; that's `table-management`'s tool for `edgemart-table-sim-service`.
+   tool; that's `table-management`'s tool for `table-occupancy-service`.
 2. Present the proposed change and reason.
 3. Obtain explicit user approval in the current conversation.
 4. Call the action tool with only approved values.

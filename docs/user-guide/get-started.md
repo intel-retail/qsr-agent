@@ -6,10 +6,10 @@ Agent.
 ## Prerequisites
 
 - A Linux system with an Intel® GPU that meets the
-  [System Requirements](get-started/system-requirements.md).
+  [System Requirements](./get-started/system-requirements.md).
 - Docker Engine with the Compose plugin, Git, `make`, and Python 3.
-- Network access to GitHub, Docker Hub, and Hugging Face. Behind a proxy, see
-  [Configuration](get-started/configuration.md#proxy).
+- Network access to GitHub, Docker Hub, and Hugging Face. If you are behind a proxy, see
+  [Configuration](./get-started/configuration.md#proxy).
 
 ## Step 1: Get the Code
 
@@ -27,17 +27,32 @@ make download-models
 This downloads the model set by `MODEL_ID` in `.env.example` (default
 `OpenVINO/Qwen3-30B-A3B-Instruct-2507-int4-ov`, about 16 GB) into `./models`. The download is skipped if the model is already present.
 
-## Step 3: Start the Agent
+## Step 3: Connect Store Services
+
+Store data comes from the store services, which run on their own hosts. Set
+their MCP URLs in `.env.example` before you start the agent, for example:
+
+```bash
+QSR_KIOSK_MCP_URL=http://<kiosk-host>:<port>/mcp
+QSR_EXTRA_NO_PROXY=<kiosk-host>
+```
+
+See [Connect Store Services](get-started/configuration.md#connect-store-services).
+Without service URLs the agent runs with weather only.
+
+## Step 4: Start the Agent
 
 ```bash
 make up
 ```
 
 `make up` checks Docker, the Intel GPU device, and the model. It then pulls the
-agent image and starts three containers:
+agent image and starts three containers (to run the code you cloned instead of
+the published image, use `make up REGISTRY=false`; see
+[Build from Source](./get-started/build-from-source.md)):
 
 | Container | Role |
-|---|---|
+| --- | --- |
 | `ovms` | OpenVINO™ Model Server running the language model on the Intel® GPU |
 | `qsr-agent` | Operator UI and agent runtime |
 | `weather` | Weather service (simulated by default) |
@@ -51,7 +66,7 @@ make status
 
 The agent is ready when `qsr-agent` reports `healthy`.
 
-## Step 4: Open the Operator UI
+## Step 5: Open the Operator UI
 
 Open `http://<host>:8600` in a browser, or `http://localhost:8600` on the same
 machine.
@@ -62,7 +77,7 @@ Try a few questions in **Operator Chat**:
 - *What is the current order accuracy rate?*
 - *What's the weather at the store right now?*
 
-## Step 5: Trigger an Event
+## Step 6: Trigger an Event
 
 Change the simulated weather. This also sends a weather event to the agent:
 
@@ -71,9 +86,9 @@ make weather CONDITION=rain TEMP=12
 ```
 
 The event appears in the **Autonomy Decisions** panel, and the agent evaluates
-it. If the
-agent proposes a change, such as adding hot drinks to the menu, select
-**Approve** or **Reject**. See the [Operator Guide](operator-guide.md) for more.
+it. If the agent proposes a change, such as taking cold drinks off the menu,
+select **Approve** or **Reject**. See the [Operator Guide](./operator-guide.md#review-event-decisions)
+for more.
 
 ## Stop the Agent
 
@@ -86,6 +101,17 @@ restored on the next `make up`.
 
 ## Next Steps
 
-- Connect your store services: [Configuration](get-started/configuration.md).
-- Understand the system: [How It Works](how-it-works.md).
-- Build the images yourself: [Build from Source](get-started/build-from-source.md).
+- Connect your store services: [Configuration](./get-started/configuration.md#connect-store-services).
+- Understand the system: [How It Works](./how-it-works.md).
+- Familiarise yourself with the [Operator Guide](./operator-guide.md).
+
+<!--hide_directive
+:::{toctree}
+:hidden:
+
+./get-started/system-requirements.md
+./get-started/configuration.md
+./get-started/build-from-source.md
+
+:::
+hide_directive-->

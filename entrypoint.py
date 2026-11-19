@@ -165,10 +165,6 @@ def configure_hermes() -> None:
 
     trust_remote_mcp_certs(servers)
 
-    python = str(ROOT / ".venv/mcp/bin/python")
-    for script in sorted((ROOT / "tests/mcp-services").glob("*_server.py")):
-        name = script.stem[: -len("_server")].replace("_", "-")
-        servers[name] = {"command": python, "args": [str(script)], "enabled": True}
     enabled_names = [
         name for name, server in servers.items()
         if not isinstance(server, dict) or server.get("enabled", True)

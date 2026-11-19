@@ -6,14 +6,27 @@ Edit `.env.example` in the repository root. Every `make up` copies it to `.env`,
 so changes made directly to `.env` are overwritten.
 
 | What you changed | Apply with |
-|---|---|
+| --- | --- |
 | `.env.example` | `make up` |
 | `agent-config/hermes/*.yaml` or `qsr-skills/` | `make restart` |
+
+## Settings You Must Change
+
+| Where | Setting | Why |
+| --- | --- | --- |
+| Agent `.env.example` | Service URLs, for example `QSR_KIOSK_MCP_URL` | Empty means the agent has no data from that service |
+| Agent `.env.example` | `QSR_EXTRA_NO_PROXY` (behind a proxy) | Lists the service hosts so the agent reaches them directly |
+| Agent `.env.example` | `MODEL_ROOT`, `MODEL_ID` (if not the defaults) | Must point at a downloaded model, or `make up` stops |
+| Each service host | Agent event URL and store ID | Without them the service sends no events, or they are rejected |
+| Every host | NTP time synchronization | A clock two minutes off makes every decision for that host's events fail |
+
+See [Connect Store Services](#connect-store-services) and
+[Send Events From Store Systems](#send-events-from-store-systems).
 
 ## Main Settings
 
 | Variable | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `MODEL_ROOT` | `./models` | Host directory that holds downloaded models |
 | `MODEL_ID` | `OpenVINO/Qwen3-30B-A3B-Instruct-2507-int4-ov` | Model served by the OpenVINO™ Model Server. Use an OpenVINO™ model with tool-calling support, for example `OpenVINO/Qwen3-8B-int4-ov`. After changing it, run `make download-models` and `make up` |
 | `QSR_UI_HOST` | `0.0.0.0` | Interface the operator UI listens on. Use `127.0.0.1` for local-only access |
@@ -26,7 +39,7 @@ so changes made directly to `.env` are overwritten.
 ## Image Source
 
 | Variable | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `REGISTRY` | `true` | `true` pulls the published image; `false` builds it locally |
 | `REGISTRY_URL` | `intel/` | Registry and namespace prefix |
 | `TAG` | `latest` | Image tag |
@@ -36,7 +49,7 @@ make up                                            # pull intel/qsr-agent:latest
 make up REGISTRY_URL=myreg.io/team/ TAG=2026.2.0   # custom registry and tag
 ```
 
-To build locally, see [Build from Source](build-from-source.md).
+To build locally, see [Build from Source](./build-from-source.md).
 
 ## Weather
 
@@ -52,8 +65,9 @@ WEATHER_LOCATION_NAME=My Restaurant
 WEATHER_STORE_ID=qsr-001
 ```
 
-Open-Meteo's free API is for non-commercial use. Commercial deployments need a
-paid key or a self-hosted instance.
+> [!IMPORTANT]
+> Open-Meteo's free API is for non-commercial use. Commercial deployments need a
+  paid key or a self-hosted instance.
 
 ## Connect Store Services
 
@@ -79,18 +93,21 @@ mcp_servers:
   the host to `QSR_EXTRA_NO_PROXY`.
 - **Disable a service:** set `enabled: false`.
 
-The preconfigured entries read their URLs from `.env.example`. Leave
-`QSR_SAD_MCP_URL` or `QSR_LP_MCP_URL` empty to skip that service:
+The preconfigured entries read their URLs from `.env.example`. Leave a URL
+empty to skip that service:
 
 | Service | Purpose | Setting |
-|---|---|---|
+| --- | --- | --- |
 | `weather` | Store-location weather | `QSR_WEATHER_MCP_URL` |
 | `suspicious-activity` | Kitchen food-safety events | `QSR_SAD_MCP_URL` |
 | `loss-prevention` | Self-checkout loss events | `QSR_LP_MCP_URL` |
+| `order-accuracy-take-away` | Take-away order accuracy | `QSR_ORDER_ACCURACY_TAKE_AWAY_MCP_URL` |
+| `order-accuracy-dine-in` | Dine-in order accuracy | `QSR_ORDER_ACCURACY_DINE_IN_MCP_URL` |
+| `kiosk` | Queue, menu, and kiosk settings | `QSR_KIOSK_MCP_URL` |
 | `digital-signage` | In-store advertising | `QSR_DIGITAL_SIGNAGE_MCP_URL` |
-| `edgemart-sim-service` | Café-day orders, customers, and queue | `EDGEMART_SIM_MCP_URL` |
-| `edgemart-table-sim-service` | Table occupancy and cleaning | `EDGEMART_TABLE_SIM_MCP_URL` |
-| `edgemart-footfall-sim-service` | Zone footfall and busy hours | `EDGEMART_FOOTFALL_SIM_MCP_URL` |
+| `store-activity-service` | Café-day orders, customers, and queue | `EDGEMART_SIM_MCP_URL` |
+| `table-occupancy-service` | Table occupancy and cleaning | `EDGEMART_TABLE_SIM_MCP_URL` |
+| `footfall-service` | Zone footfall and busy hours | `EDGEMART_FOOTFALL_SIM_MCP_URL` |
 
 Services that are not running appear as unavailable in **Connected apps**. The
 agent keeps working with the services it can reach.
@@ -104,6 +121,30 @@ service regenerates its certificate, restart the agent.
 Store systems send events to the agent with an HTTP `POST` to
 `http://<agent-host>:8600/autonomy/events`. See the
 [API Reference](../api-reference.md#post-autonomyevents) for the event format.
+On each service host:
+
+- Set the service's event URL to the agent's `/autonomy/events` endpoint.
+- Set the store ID to the agent's `QSR_RESTAURANT_ID` (default `qsr-001`), or
+  the agent rejects the events.
+- Behind a proxy, let the service reach the agent host directly.
+- Send only events that may need a decision. Each event costs a model run and
+  an operator review.
+
+To check the connection, run `curl -s http://localhost:8600/status?force=1`:
+every connected service is listed with `"ok": true`. Ask a question about the
+service in **Operator Chat**, then send an event from the service and confirm
+it appears in **Autonomy Decisions**.
+
+### Operating Notes
+
+- **Restarts:** after restarting a service, run `make restart` so the agent
+  reconnects.
+- **Clocks:** keep the agent and service hosts synchronized (NTP). The agent
+  refuses to act on a service snapshot more than 120 seconds old, so a host
+  whose clock is behind makes every decision for its events fail with a
+  clock-skew error.
+- **Security:** `/autonomy/events` has no authentication. Keep it on the store
+  network or behind an authenticating proxy.
 
 ## Proxy
 

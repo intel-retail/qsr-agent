@@ -3,7 +3,7 @@
 Open the operator UI at `http://<host>:8600`. The screen has four areas:
 
 | Area | Use it to |
-|---|---|
+| --- | --- |
 | **Connected apps** | See which store services the agent can reach and how many tools each one offers |
 | **Operator Chat** | Ask questions and give instructions |
 | **Autonomy Decisions** | Review events, read the agent's reasoning, and approve or reject proposals |
@@ -36,7 +36,7 @@ When a store event arrives, it appears in **Autonomy Decisions** with one of
 these states:
 
 | State | Meaning |
-|---|---|
+| --- | --- |
 | Queued / Processing | The agent is evaluating the event |
 | Pending | The agent proposes an action and is waiting for you |
 | No action | The agent decided no change is needed and explains why |
@@ -61,21 +61,17 @@ make weather CONDITION=rain TEMP=12
 make weather CONDITION=clear NO_EVENT=1    # change silently, no event
 ```
 
-Simulate a queue change:
-
-```bash
-make queue COUNT=12 WAIT=9
-```
-
-Any store system can send its own events. See the
+Other events come from the connected store services themselves. Any store
+system can send events; see the
 [API Reference](api-reference.md#post-autonomyevents).
 
 ## Teach the Agent
 
 The agent records how you respond to events: approvals, rejections with
-reasons, and instructions you give in chat while an event is shown. When enough
-responses have been collected for a service, the learning card shows
-**Learn now**.
+reasons, and instructions you give in chat while an event is shown. When a
+service has 20 responses (`QSR_LEARN_THRESHOLD`), with at least 5 for one event
+type (`QSR_LEARN_MIN_EVENT_RECORDS`), the learning card shows **Learn now**.
+The command line needs only the 5 per event type (`--min-records`).
 
 1. Select **Learn now**. Learning takes about a minute.
 2. When the card shows **New skill ready for review**, select **Review**.
@@ -92,6 +88,52 @@ make learn ARGS=run
 make learn ARGS=pending
 make learn ARGS="approve <id>"
 ```
+
+Learned rules waiting for review are kept in the `learning` volume, so they
+survive `make restart`, `make up` and image rebuilds.
+
+### Try learning with sample data
+
+To see learning work before you have collected real responses, import the
+synthetic sample history (`learning/simulated/event_op_response.jsonl`, marked
+`source: "simulated"`). Use a test deployment only: imported records are added
+to the same journal as real operator responses, so do not import them into a
+production store.
+
+```bash
+docker compose cp learning/simulated/event_op_response.jsonl qsr-agent:/tmp/event_op_response.jsonl
+make learn ARGS="import /tmp/event_op_response.jsonl"
+make learn ARGS=status
+make learn ARGS="run --service <service>"
+make learn ARGS=pending
+make learn ARGS="approve <id>"
+```
+
+Importing is safe to repeat: records already in the journal are skipped. After
+approval, `learned-<service>/SKILL.md` appears under `learning/skills/` in the
+`learning` volume, not in the repository's `learning/` folder. Read it with
+`docker compose exec qsr-agent cat /opt/qsr/learning/skills/learned-<service>/SKILL.md`.
+To discard a proposal, run `make learn ARGS="reject <id>"`.
+
+To learn again from scratch for one service, for example after importing new
+sample data, delete its learned skill first (test deployments only):
+
+```bash
+docker compose exec qsr-agent rm -rf /opt/qsr/learning/skills/learned-<service>
+```
+
+The sample file can be regenerated with `python scripts/simulate_service_history.py`.
+
+Notes:
+
+- Learning needs the model server to be running, and takes about a minute.
+- Outside Docker, run `scripts/learn.py` with `QSR_MCP_PYTHON` pointing to a
+  Python that has `fastmcp` installed (the default is `.venv/mcp/bin/python`).
+  Without it, the learner cannot read tool schemas and drops its rules.
+- Outside Docker, run `python scripts/learn.py setup` once so the learner
+  profile reads and writes the `learning/skills` folder you intend to use.
+  Use `QSR_LEARNING_DIR` and `QSR_LEARNER_HERMES_HOME` to keep a test run
+  separate from real state.
 
 ## Command-Line Chat
 
