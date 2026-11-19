@@ -9,7 +9,7 @@
 | `Docker daemon is not available to this user` | Add your user to the `docker` group, then log out and back in. |
 | `qsr-agent` stays `starting` for several minutes | The model is loading and warming up on the GPU. Follow progress with `make logs`. |
 | `ovms` restarts repeatedly | Check `docker compose logs ovms`. Common causes are insufficient GPU memory and a GPU device the container cannot access. |
-| Settings changes have no effect | Edit `.env.example`, not `.env`. `make up` overwrites `.env`. |
+| Settings changes have no effect | Edit `.env.example`, not `.env`, then run `make up`. `make up` overwrites `.env`, and `make restart` does not apply `.env.example` changes. |
 | Image pull fails | Check registry access and proxy settings, or build locally with `make up REGISTRY=false`. |
 | Build fails with `failed to download pinned uv ... (curl 60)` | A proxy node intercepts GitHub downloads. See [Builds Behind a Proxy](get-started/build-from-source.md#builds-behind-a-proxy). |
 
