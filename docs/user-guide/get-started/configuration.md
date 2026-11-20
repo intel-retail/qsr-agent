@@ -132,8 +132,11 @@ certificate, run `make restart`.
   `NO_PROXY`, `QSR_EXTRA_NO_PROXY` (export it before running `setup.sh`), and
   any entries already in that file. Hermes then reaches the service directly,
   the same way the setup reachability check does.
-- **Self-signed HTTPS certificates.** The current certificate of every reachable
-  HTTPS service is trusted. `setup.sh` writes it, with the system CAs, to
+- **Self-signed HTTPS certificates.** `setup.sh` logs the SHA-256 fingerprint of
+  the certificate each reachable HTTPS service presents but does not trust it.
+  Compare the fingerprint with the service's certificate, then rerun with
+  `QSR_TRUST_REMOTE_CERTS=1 scripts/setup.sh` to trust the current certificates.
+  `setup.sh` writes them, with the system CAs, to
   `~/.hermes/remote-mcp-ca-bundle.pem`, sets `SSL_CERT_FILE` to that file in
   `~/.hermes/.env`, and starts the operator UI with it. This trusts whatever
   certificate the service presents at that moment, so use it on a trusted
@@ -143,7 +146,7 @@ certificate, run `make restart`.
 
 The operator UI restarts when either file changes. If a service regenerates its
 certificate (some do on every restart), tools from that service fail with
-`CERTIFICATE_VERIFY_FAILED` until you rerun `scripts/setup.sh`.
+`CERTIFICATE_VERIFY_FAILED` until you rerun `QSR_TRUST_REMOTE_CERTS=1 scripts/setup.sh`.
 
 ## Send Events From Store Systems
 

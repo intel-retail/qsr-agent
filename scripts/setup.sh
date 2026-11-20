@@ -109,6 +109,8 @@ Optional environment variables:
     HERMES_INSTALL_COMMIT / HERMES_INSTALL_SHA256  Hermes installer revision and its SHA-256, set together
                         (default: pinned in scripts/hermes-pin.sh)
     HARNESS_DIR         Where the installer is fetched (default: <repo>/.harness)
+    QSR_TRUST_REMOTE_CERTS  Set to 1 to trust the current certificate of each reachable HTTPS remote
+                        service (self-signed); SHA-256 fingerprints are always logged
     HARNESS_IR_PORT     Loopback port for the Inference Router (default: 4445)
     HARNESS_OVMS_IMAGE  OVMS image (default: the one agent-harness-install recommends)
     HARNESS_OVMS_EXTRA_ARGS  Extra OVMS server flags (default: none; model flags are rejected in config mode)
@@ -278,6 +280,18 @@ setup_python() {
     fi
 }
 
+# Before the harness runs: it can change the config, and Hermes moves loose *.bak files into
+# backups/config/ on its own, so the copy goes straight there.
+backup_hermes_config() {
+    local backup_dir backup_path
+    [[ -f "$HERMES_CONFIG" ]] || return 0
+    backup_dir="$(dirname "$HERMES_CONFIG")/backups/config"
+    backup_path="$backup_dir/config.pre-qsr-setup.$(date -u +%Y%m%dT%H%M%SZ).yaml"
+    mkdir -p "$backup_dir"
+    cp -p "$HERMES_CONFIG" "$backup_path"
+    log "Backed up Hermes config to $backup_path"
+}
+
 install_inference_and_hermes() {
     local harness legacy=${LEGACY_OVMS_CONTAINER:-ovms-qwen3-30b-a3b}
     # Earlier versions of this script ran OVMS in this container, with a restart policy, on the
@@ -351,18 +365,14 @@ PY
 }
 
 configure_hermes() {
-    local config_dir backup_path
+    local config_dir
     config_dir=$(dirname "$HERMES_CONFIG")
     mkdir -p "$config_dir"
-    if [[ -f "$HERMES_CONFIG" ]]; then
-        backup_path="$HERMES_CONFIG.bak.$(date -u +%Y%m%dT%H%M%SZ)"
-        cp -p "$HERMES_CONFIG" "$backup_path"
-        log "Backed up Hermes config to $backup_path"
-    fi
 
     ROOT_DIR="$ROOT_DIR" HERMES_CONFIG="$HERMES_CONFIG" MODEL_ID="$SERVED_MODEL" \
         LLM_BASE_URL="$ROUTER_URL" QSR_WEATHER_MCP_URL="$WEATHER_MCP_URL" \
         setup_python - <<'PY'
+import hashlib
 import os
 import re
 import socket
@@ -422,6 +432,9 @@ def expand_env(value: Any) -> Any:
 current = {}
 if config_path.exists():
     current = yaml.safe_load(config_path.read_text()) or {}
+# Replaced, not appended: a path left by an older checkout makes skills ambiguous.
+if isinstance(current.get("skills"), dict):
+    current["skills"].pop("external_dirs", None)
 for fragment in fragments:
     current = merge(current, expand_env(replace_repo_path(yaml.safe_load(fragment.read_text()) or {})))
 current["model"]["default"] = model_id
@@ -510,11 +523,11 @@ for parsed in enabled_remotes.values():
         no_proxy.append(parsed.hostname)
 env_updates = {"NO_PROXY": ",".join(no_proxy), "no_proxy": ",".join(no_proxy)}
 
-# Trust-on-first-use for https services, same tradeoff as the container
-# entrypoint: only reasonable on an internal, trusted network. The bundle is
-# system CAs plus the services' current leaf certs. A self-signed service that
-# regenerates its cert on restart needs another setup.sh run.
+# Opt-in (QSR_TRUST_REMOTE_CERTS=1) trust-on-first-use for https services: the bundle is
+# system CAs plus the services' current leaf certs. A self-signed service that regenerates
+# its cert on restart needs another setup.sh run. Every cert seen is logged with its SHA-256.
 user_bundle = current_env.get("SSL_CERT_FILE")
+trust_certs = os.environ.get("QSR_TRUST_REMOTE_CERTS", "").lower() in ("1", "true", "yes")
 if user_bundle and Path(user_bundle) != CA_BUNDLE:
     print(f"[qsr-setup] keeping SSL_CERT_FILE={user_bundle} from {env_path}; not adding service certs")
 else:
@@ -522,11 +535,20 @@ else:
     for name, parsed in enabled_remotes.items():
         if parsed.scheme != "https" or not parsed.hostname:
             continue
+        endpoint = f"{parsed.hostname}:{parsed.port or 443}"
         try:
-            fetched.append(ssl.get_server_certificate((parsed.hostname, parsed.port or 443), timeout=5.0))
-            print(f"[qsr-setup] trusting current TLS cert for remote MCP '{name}' ({parsed.hostname}:{parsed.port or 443})")
+            pem = ssl.get_server_certificate((parsed.hostname, parsed.port or 443), timeout=5.0)
         except (OSError, ssl.SSLError) as exc:
             print(f"[qsr-setup] could not fetch TLS cert for '{name}' ({exc}); it may fail verification if self-signed")
+            continue
+        digest = hashlib.sha256(ssl.PEM_cert_to_DER_cert(pem)).hexdigest()
+        fingerprint = ":".join(digest[i:i + 2] for i in range(0, len(digest), 2)).upper()
+        if trust_certs:
+            fetched.append(pem)
+            print(f"[qsr-setup] trusting TLS cert for remote MCP '{name}' ({endpoint}) SHA-256 {fingerprint}")
+        else:
+            print(f"[qsr-setup] remote MCP '{name}' ({endpoint}) presents TLS cert SHA-256 {fingerprint}; not trusted automatically "
+                  "(rerun with QSR_TRUST_REMOTE_CERTS=1 if it is self-signed and this fingerprint is expected)")
     if fetched:
         system_ca = [
             Path(p) for p in (ssl.get_default_verify_paths().cafile, "/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt")
@@ -842,6 +864,7 @@ main() {
     if [[ $CHECK_ONLY == false ]]; then
         ensure_build_packages
         ensure_helper_venv
+        backup_hermes_config
         install_inference_and_hermes
         wait_for_ovms_model
         wait_for_router

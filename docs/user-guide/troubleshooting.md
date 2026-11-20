@@ -22,7 +22,7 @@
 | A service shows as unavailable in **Connected apps** | Confirm the service is running and its URL is reachable from the agent container. Use `host.docker.internal`, not `127.0.0.1`, for services on the same machine. |
 | A remote service is unreachable behind a proxy | Add the service host to `QSR_EXTRA_NO_PROXY` in `.env.example`, then run `make up`. |
 | An HTTPS service fails after it restarted | The service may have generated a new certificate. Run `make restart`. |
-| Host install (`scripts/setup.sh`): an HTTPS service has no tools, and `~/.hermes/logs/agent.log` shows `CERTIFICATE_VERIFY_FAILED` | The service regenerated its self-signed certificate, or `~/.hermes/.env` sets your own `SSL_CERT_FILE`. Rerun `scripts/setup.sh`; see [Remote Services on a Host Install](get-started/configuration.md#remote-services-on-a-host-install). |
+| Host install (`scripts/setup.sh`): an HTTPS service has no tools, and `~/.hermes/logs/agent.log` shows `CERTIFICATE_VERIFY_FAILED` | The service regenerated its self-signed certificate, or `~/.hermes/.env` sets your own `SSL_CERT_FILE`. Rerun `QSR_TRUST_REMOTE_CERTS=1 scripts/setup.sh` (check the logged fingerprint first); see [Remote Services on a Host Install](get-started/configuration.md#remote-services-on-a-host-install). |
 | Changes to `agent-config/` or `qsr-skills/` are ignored | Run `make restart`. |
 | A remote service stops answering after it restarted | The agent keeps its MCP session. Run `make restart`. |
 | A remote service is reachable again but still shows as unavailable | After repeated failures the agent parks the connection and retries every five minutes. Run `make restart` to reconnect now. If its port accepts connections but MCP requests time out, restart the service on its host. |
