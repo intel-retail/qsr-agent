@@ -149,10 +149,10 @@ services:
       QSR_MCP_PYTHON: /opt/qsr/.venv/mcp/bin/python
       # Used by autonomy reads and the `weather` Hermes MCP registration.
       QSR_WEATHER_MCP_URL: ${QSR_WEATHER_MCP_URL:-http://weather:8090/mcp}
-      # EdgeMart sim services (qsr-store-pos-agent repo) Hermes MCP registrations.
-      EDGEMART_SIM_MCP_URL: ${EDGEMART_SIM_MCP_URL:-http://host.docker.internal:3101/mcp}
-      EDGEMART_TABLE_SIM_MCP_URL: ${EDGEMART_TABLE_SIM_MCP_URL:-http://host.docker.internal:3201/mcp}
-      EDGEMART_FOOTFALL_SIM_MCP_URL: ${EDGEMART_FOOTFALL_SIM_MCP_URL:-http://host.docker.internal:3301/mcp}
+      # EdgeMart sim services (qsr-store-pos-agent repo); empty removes the registration.
+      EDGEMART_SIM_MCP_URL: ${EDGEMART_SIM_MCP_URL:-}
+      EDGEMART_TABLE_SIM_MCP_URL: ${EDGEMART_TABLE_SIM_MCP_URL:-}
+      EDGEMART_FOOTFALL_SIM_MCP_URL: ${EDGEMART_FOOTFALL_SIM_MCP_URL:-}
       # Remote SAD / Loss Prevention MCP services; empty removes the registration.
       QSR_SAD_MCP_URL: ${QSR_SAD_MCP_URL:-}
       QSR_LP_MCP_URL: ${QSR_LP_MCP_URL:-}
@@ -161,7 +161,8 @@ services:
       QSR_ORDER_ACCURACY_DINE_IN_MCP_URL: ${QSR_ORDER_ACCURACY_DINE_IN_MCP_URL:-}
       # Remote Kiosk MCP service; empty keeps the local kiosk simulation.
       QSR_KIOSK_MCP_URL: ${QSR_KIOSK_MCP_URL:-}
-      QSR_DIGITAL_SIGNAGE_MCP_URL: ${QSR_DIGITAL_SIGNAGE_MCP_URL:-https://host.docker.internal:5000/mcp}
+      # Digital Signage MCP service; empty removes the registration.
+      QSR_DIGITAL_SIGNAGE_MCP_URL: ${QSR_DIGITAL_SIGNAGE_MCP_URL:-}
       # Extra event_type=service pairs for producers that omit `service` (learning journal).
       QSR_EVENT_SERVICES: ${QSR_EVENT_SERVICES:-}
       SAD_TIMEZONE: ${SAD_TIMEZONE:-Asia/Kolkata}
