@@ -5,24 +5,42 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # Model comes from .env.example (single source); an exported MODEL_ID overrides it.
 MODEL_ID=${MODEL_ID:-$(sed -n 's/^MODEL_ID=//p' "$ROOT_DIR/.env.example")}
 [[ -n "$MODEL_ID" ]] || { echo "[qsr-setup] ERROR: set MODEL_ID in .env.example" >&2; exit 1; }
-case "$MODEL_ID" in
-    OpenVINO/Qwen3-30B-A3B-Instruct-2507-int4-ov) PINNED_REVISION=9268a085a48d496cce87d569f008975258bb70df ;;
-    OpenVINO/Qwen3-8B-int4-ov) PINNED_REVISION=5c47abf4b8e12ebe8e99745bb0c1ec17e0c0abcc ;;
-    *) PINNED_REVISION=main ;;
-esac
-MODEL_REVISION=${MODEL_REVISION:-$PINNED_REVISION}
-MODEL_ROOT=${MODEL_ROOT:-"$ROOT_DIR/models"}
-OVMS_IMAGE=${OVMS_IMAGE:-openvino/model_server@sha256:2a52cd2bc62d984f35f12b1cf58bb5dffe5f5d57b6ef3349b1b37229a768806b}
-OVMS_CONTAINER=${OVMS_CONTAINER:-ovms-qwen3-30b-a3b}
+# Same model directory as `make up` (MODEL_ROOT), so the two install paths share one copy.
+MODEL_ROOT=${MODEL_ROOT:-$(sed -n 's/^MODEL_ROOT=//p' "$ROOT_DIR/.env.example")}
+MODEL_ROOT=${MODEL_ROOT:-./models}
+[[ $MODEL_ROOT == /* ]] || MODEL_ROOT="$ROOT_DIR/${MODEL_ROOT#./}"
+# OVMS, the Inference Router and Hermes are installed by agent-harness-install
+# (open-edge-platform/edge-ai-libraries), fetched at the commit pinned in
+# scripts/fetch-harness.sh. HARNESS_* variables are read by that installer.
+HARNESS_DIR=${HARNESS_DIR:-"$ROOT_DIR/.harness"}
 # Default off 8000 to avoid clashing with SAD's alert-service (make up binds :8000).
 OVMS_PORT=${OVMS_PORT:-4444}
+HARNESS_OVMS_REST_PORT=$OVMS_PORT
+# Next to OVMS; 8010/8011 are the Order Accuracy MCP defaults and 8014 the kiosk's.
+HARNESS_IR_PORT=${HARNESS_IR_PORT:-4445}
+if [[ $OVMS_PORT == "$HARNESS_IR_PORT" ]]; then
+    echo "[qsr-setup] ERROR: OVMS_PORT and HARNESS_IR_PORT are both $OVMS_PORT; set different ports." >&2
+    exit 1
+fi
+HARNESS_MODELS_DIR=${HARNESS_MODELS_DIR:-$MODEL_ROOT}
+# Earlier versions exported models under the harness state directory. Reuse such an export
+# rather than downloading a second copy; install_inference_and_hermes says how to consolidate.
+LEGACY_MODELS_DIR="$HOME/.agent-harness-install/models"
+if [[ $HARNESS_MODELS_DIR == "$MODEL_ROOT" && -f "$LEGACY_MODELS_DIR/$MODEL_ID/graph.pbtxt" && ! -e "$MODEL_ROOT/$MODEL_ID" ]]; then
+    HARNESS_MODELS_DIR=$LEGACY_MODELS_DIR
+fi
+HARNESS_OVMS_CONTAINER=${HARNESS_OVMS_CONTAINER:-agent-harness-install-ovms}
+HARNESS_IR_CONTAINER=${HARNESS_IR_CONTAINER:-agent-harness-install-ir}
+# The harness runs OVMS with --config_path, which rejects model flags such as --tool_parser and
+# --task (the container crash-loops), so leave this empty.
+HARNESS_OVMS_EXTRA_ARGS=${HARNESS_OVMS_EXTRA_ARGS:-}
+# Set to 1 to accept OVMS running on the CPU (debugging only; the agent is unusably slow).
+ALLOW_CPU_INFERENCE=${ALLOW_CPU_INFERENCE:-0}
+export HARNESS_OVMS_REST_PORT HARNESS_IR_PORT HARNESS_OVMS_EXTRA_ARGS HARNESS_MODELS_DIR HARNESS_OVMS_CONTAINER HARNESS_IR_CONTAINER
+ROUTER_URL=http://127.0.0.1:$HARNESS_IR_PORT/v1
+# The Router matches model names exactly and serves the Hugging Face id without its org prefix.
+SERVED_MODEL=${MODEL_ID##*/}
 HERMES_CONFIG=${HERMES_CONFIG:-"$HOME/.hermes/config.yaml"}
-HERMES_INSTALL_URL=${HERMES_INSTALL_URL:-https://hermes-agent.nousresearch.com/install.sh}
-# Optional: pin Hermes to a validated commit (full 40-char SHA). The installer
-# tracks `main` by default, and newer builds have changed behavior (e.g. a
-# >=64K context-window requirement). Set this to the SHA the stack was
-# validated against to make installs reproducible for the customer handover.
-HERMES_INSTALL_COMMIT=${HERMES_INSTALL_COMMIT:-}
 SETUP_VENV=${SETUP_VENV:-"$ROOT_DIR/.venv/qsr-setup"}
 SETUP_TARGET=${SETUP_TARGET:-"$ROOT_DIR/.venv/qsr-setup-target"}
 # Dedicated venv whose interpreter launches the FastMCP kiosk/order-accuracy
@@ -70,6 +88,10 @@ export HF_HUB_DISABLE_TELEMETRY=1
 # The model and MCP services are all on loopback. If a proxy is configured,
 # localhost must bypass it or the OVMS call fails with "403 incorrect proxy
 # service". Ensure loopback is always in no_proxy for setup-time calls.
+# The caller's own bypass list, either spelling, for the Hermes .env written by configure_hermes.
+# NO_PROXY itself stays as before because agent-harness-install derives the Docker daemon's proxy
+# drop-in from it, and a changed drop-in restarts dockerd.
+export QSR_CALLER_NO_PROXY="${NO_PROXY:-}${no_proxy:+,$no_proxy}"
 export NO_PROXY="localhost,127.0.0.1,::1${NO_PROXY:+,$NO_PROXY}"
 export no_proxy="$NO_PROXY"
 
@@ -82,13 +104,23 @@ Use --check to validate an existing installation without changing it.
 
 Optional environment variables:
     MODEL_ID            Hugging Face model ID
-    MODEL_REVISION      Hugging Face commit revision
-  MODEL_ROOT          Host model directory (default: <repo>/models)
-    OVMS_IMAGE          OVMS GPU image reference
-  OVMS_CONTAINER      OVMS container name
-  OVMS_PORT           Loopback port for OVMS (default: 8000)
-  HERMES_CONFIG       Hermes YAML path
-  HERMES_INSTALL_URL  Hermes installer URL
+    MODEL_ROOT          Model directory shared with `make up` (default: from .env.example, ./models)
+    HARNESS_INSTALL_REF agent-harness-install commit SHA (default: pinned in scripts/fetch-harness.sh)
+    HERMES_INSTALL_COMMIT / HERMES_INSTALL_SHA256  Hermes installer revision and its SHA-256, set together
+                        (default: pinned in scripts/hermes-pin.sh)
+    HARNESS_DIR         Where the installer is fetched (default: <repo>/.harness)
+    QSR_TRUST_REMOTE_CERTS  Set to 1 to trust the current certificate of each reachable HTTPS remote
+                        service (self-signed); SHA-256 fingerprints are always logged
+    HARNESS_IR_PORT     Loopback port for the Inference Router (default: 4445)
+    HARNESS_OVMS_IMAGE  OVMS image (default: the one agent-harness-install recommends)
+    HARNESS_OVMS_EXTRA_ARGS  Extra OVMS server flags (default: none; model flags are rejected in config mode)
+    HARNESS_MODELS_DIR  Where the harness stores OVMS models (default: MODEL_ROOT, or an existing
+                        export under ~/.agent-harness-install/models from an earlier version)
+    HARNESS_OVMS_CONTAINER  OVMS container name (default: agent-harness-install-ovms)
+    HARNESS_IR_CONTAINER  Inference Router container name (default: agent-harness-install-ir)
+    OVMS_PORT           Loopback port for OVMS (default: 4444)
+    ALLOW_CPU_INFERENCE Set to 1 to accept OVMS without GPU access (default: fail)
+    HERMES_CONFIG       Hermes YAML path
     SETUP_VENV          Helper virtual environment path
     SETUP_TARGET        Fallback isolated dependency path
     MCP_VENV            Venv for the weather service and autonomy runtime
@@ -128,8 +160,8 @@ render_node() {
     printf '%s\n' "${nodes[0]}"
 }
 
-wait_for_ovms() {
-    OVMS_URL="http://127.0.0.1:$OVMS_PORT/v3/models" MODEL_ID="$MODEL_ID" \
+wait_for_router() {
+    ROUTER_MODELS_URL="$ROUTER_URL/models" SERVED_MODEL="$SERVED_MODEL" \
         python3 - <<'PY'
 import json
 import os
@@ -137,8 +169,8 @@ import time
 import urllib.request
 
 deadline = time.monotonic() + 300
-url = os.environ["OVMS_URL"]
-model_id = os.environ["MODEL_ID"]
+url = os.environ["ROUTER_MODELS_URL"]
+model_id = os.environ["SERVED_MODEL"]
 while time.monotonic() < deadline:
     try:
         with urllib.request.urlopen(url, timeout=5) as response:
@@ -148,7 +180,7 @@ while time.monotonic() < deadline:
     except Exception:
         pass
     time.sleep(2)
-raise SystemExit(f"OVMS did not make {model_id} available within 300 seconds")
+raise SystemExit(f"The Inference Router did not serve {model_id} within 300 seconds")
 PY
 }
 
@@ -159,8 +191,21 @@ check_prerequisites() {
     require_command python3 "Install Python 3.11 or newer and python3-venv."
     require_command stat "Install GNU coreutils and rerun setup."
     check_python_version
+    check_python_venv
     docker info >/dev/null 2>&1 || fail "Docker is not running or this user cannot access it."
     render_node >/dev/null
+}
+
+# Everything that would need `sudo apt-get` is checked here, because stdin is closed for the
+# installers below: a sudo password prompt cannot be answered and would just fail mid-run.
+# Docker is required above (never installed here); the harness installs Node.js through nvm
+# in the user's home without sudo.
+check_python_venv() {
+    python3 -c 'import venv, ensurepip, yaml' >/dev/null 2>&1 && return 0
+    if sudo -n true 2>/dev/null; then
+        return 0  # the harness installs python3-venv / python3-yaml itself
+    fi
+    fail "python3-venv or PyYAML is missing and passwordless sudo is unavailable. Install them first: sudo apt-get install -y python3-venv python3-pip python3-yaml"
 }
 
 # Pre-install the packages the Hermes installer would otherwise apt-install via
@@ -189,7 +234,7 @@ ensure_build_packages() {
 
 ensure_helper_venv() {
     if PYTHONPATH="$SETUP_TARGET" python3 -c \
-        'import huggingface_hub, yaml' >/dev/null 2>&1; then
+        'import yaml' >/dev/null 2>&1; then
         SETUP_PYTHON=python3
         SETUP_PYTHONPATH=$SETUP_TARGET
         log "Using isolated setup helpers at $SETUP_TARGET"
@@ -202,7 +247,7 @@ ensure_helper_venv() {
             log "venv support unavailable; using isolated pip --target fallback"
             mkdir -p "$SETUP_TARGET"
             python3 -m pip install --quiet --upgrade --target "$SETUP_TARGET" \
-                huggingface_hub PyYAML ||
+                PyYAML ||
                 fail "Could not install setup helpers. Install python3-venv or pip."
             SETUP_PYTHON=python3
             SETUP_PYTHONPATH=$SETUP_TARGET
@@ -210,7 +255,7 @@ ensure_helper_venv() {
         fi
     fi
     "$SETUP_VENV/bin/python" -m pip install --quiet --upgrade pip
-    "$SETUP_VENV/bin/python" -m pip install --quiet --upgrade huggingface_hub PyYAML
+    "$SETUP_VENV/bin/python" -m pip install --quiet --upgrade PyYAML
     SETUP_PYTHON="$SETUP_VENV/bin/python"
 }
 
@@ -235,94 +280,81 @@ setup_python() {
     fi
 }
 
-install_hermes() {
-    if ! command -v hermes >/dev/null 2>&1; then
-        log "Installing Hermes Agent (unattended)"
-        local installer
-        installer=$(mktemp)
-        curl -fsSL "$HERMES_INSTALL_URL" -o "$installer"
-        # Official installer flags for zero-touch installs:
-        #   --skip-setup       skip the interactive API-key/setup wizard
-        #   --non-interactive  take defaults for every prompt (no gateway prompt)
-        # Optionally pin to a validated commit for reproducible handover installs.
-        # stdin is also closed so nothing can fall back to reading a TTY.
-        local pin_args=()
-        [[ -n "$HERMES_INSTALL_COMMIT" ]] && pin_args=(--commit "$HERMES_INSTALL_COMMIT")
-        bash "$installer" --skip-setup --non-interactive "${pin_args[@]}" </dev/null
-        rm -f "$installer"
-        export PATH="$HOME/.local/bin:$PATH"
+# Before the harness runs: it can change the config, and Hermes moves loose *.bak files into
+# backups/config/ on its own, so the copy goes straight there.
+backup_hermes_config() {
+    local backup_dir backup_path
+    [[ -f "$HERMES_CONFIG" ]] || return 0
+    backup_dir="$(dirname "$HERMES_CONFIG")/backups/config"
+    backup_path="$backup_dir/config.pre-qsr-setup.$(date -u +%Y%m%dT%H%M%SZ).yaml"
+    mkdir -p "$backup_dir"
+    cp -p "$HERMES_CONFIG" "$backup_path"
+    log "Backed up Hermes config to $backup_path"
+}
+
+install_inference_and_hermes() {
+    local harness legacy=${LEGACY_OVMS_CONTAINER:-ovms-qwen3-30b-a3b}
+    # Earlier versions of this script ran OVMS in this container, with a restart policy, on the
+    # same default port the harness OVMS now binds.
+    if docker container inspect "$legacy" >/dev/null 2>&1; then
+        log "Removing OVMS container $legacy from an earlier setup; the harness OVMS replaces it"
+        docker rm -f "$legacy" >/dev/null
     fi
+    # Earlier versions exported models under the harness state directory; the default is now
+    # MODEL_ROOT. Say so instead of silently downloading a second copy.
+    if [[ $HARNESS_MODELS_DIR == "$LEGACY_MODELS_DIR" && $MODEL_ROOT != "$LEGACY_MODELS_DIR" ]]; then
+        log "NOTE: reusing $MODEL_ID exported in $LEGACY_MODELS_DIR (the default location is now MODEL_ROOT=$MODEL_ROOT)."
+        log "      To share one copy with 'make up', stop the stack and move it once:"
+        log "        mkdir -p '$MODEL_ROOT/${MODEL_ID%/*}' && mv '$LEGACY_MODELS_DIR/$MODEL_ID' '$MODEL_ROOT/$MODEL_ID' && scripts/setup.sh"
+    fi
+    log "Fetching agent-harness-install"
+    harness=$(bash "$ROOT_DIR/scripts/fetch-harness.sh" "$HARNESS_DIR") ||
+        fail "Could not fetch agent-harness-install."
+    # Installs Docker/Node prerequisites, OVMS and the Inference Router in Docker, and
+    # Hermes; it only prints how to configure Hermes, which configure_hermes below does.
+    # stdin is closed so nothing can read a TTY.
+    export_hermes_pin
+    log "Running agent-harness-install for $MODEL_ID (OVMS, Inference Router, Hermes)"
+    bash "$harness/install.sh" --harness hermes --model "$MODEL_ID" --non-interactive </dev/null ||
+        fail "agent-harness-install failed; see its output above."
+    export PATH="$HOME/.local/bin:$PATH"
     require_command hermes "Add $HOME/.local/bin to PATH after installation."
     log "Using $(hermes --version | head -n 1)"
 }
 
-download_model() {
-    local model_path="$MODEL_ROOT/$MODEL_ID"
-    if [[ -f "$model_path/config.json" ]]; then
-        log "Model already present at $model_path"
-        return
-    fi
-    log "Downloading $MODEL_ID to $model_path"
-    MODEL_ID="$MODEL_ID" MODEL_REVISION="$MODEL_REVISION" MODEL_ROOT="$MODEL_ROOT" \
-        setup_python - <<'PY'
-import os
-from huggingface_hub import snapshot_download
-
-model_id = os.environ["MODEL_ID"]
-model_revision = os.environ["MODEL_REVISION"]
-model_root = os.environ["MODEL_ROOT"]
-print(snapshot_download(
-    repo_id=model_id,
-    revision=model_revision,
-    local_dir=os.path.join(model_root, model_id),
-))
-PY
+# The harness installs the Hermes release named by HERMES_PINNED_COMMIT/HERMES_PINNED_SHA256 (both
+# required together; it verifies the installer's SHA-256 and checks out that commit). Pass ours
+# from scripts/hermes-pin.sh so the host install and the container image ship the same release.
+export_hermes_pin() {
+    HERMES_PINNED_COMMIT=$(source "$ROOT_DIR/scripts/hermes-pin.sh" && printf '%s' "$HERMES_INSTALL_COMMIT") ||
+        fail "Could not read the Hermes pin from scripts/hermes-pin.sh."
+    HERMES_PINNED_SHA256=$(source "$ROOT_DIR/scripts/hermes-pin.sh" && printf '%s' "$HERMES_INSTALL_SHA256") ||
+        fail "Could not read the Hermes pin from scripts/hermes-pin.sh."
+    export HERMES_PINNED_COMMIT HERMES_PINNED_SHA256
+    log "Hermes pinned to installer commit ${HERMES_PINNED_COMMIT:0:12}"
 }
 
-start_ovms() {
-    local device group_id
-    device=$(render_node)
-    group_id=$(stat -c '%g' "$device")
-
-    log "Pulling $OVMS_IMAGE"
-    docker pull "$OVMS_IMAGE"
-    if docker container inspect "$OVMS_CONTAINER" >/dev/null 2>&1; then
-        log "Replacing existing $OVMS_CONTAINER container"
-        docker rm -f "$OVMS_CONTAINER" >/dev/null
-    fi
-
-    log "Starting OVMS on http://127.0.0.1:$OVMS_PORT/v3"
-    docker run -d --name "$OVMS_CONTAINER" --restart unless-stopped \
-        --user "$(id -u):$(id -g)" \
-        -p "127.0.0.1:$OVMS_PORT:8000" \
-        -v "$MODEL_ROOT:/models" \
-        --device /dev/dri \
-        --group-add "$group_id" \
-        "$OVMS_IMAGE" \
-        --rest_port 8000 \
-        --model_repository_path /models \
-        --source_model "$MODEL_ID" \
-        --target_device GPU \
-        --tool_parser hermes3 \
-        --task text_generation >/dev/null
-
-    wait_for_ovms
+wait_for_ovms_model() {
+    local deadline=$((SECONDS + 300))
+    until curl -fsS --noproxy '*' -o /dev/null "http://127.0.0.1:$OVMS_PORT/v2/models/$SERVED_MODEL/ready"; do
+        ((SECONDS < deadline)) || fail "OVMS did not report $SERVED_MODEL ready within 300 seconds; check: docker logs $HARNESS_OVMS_CONTAINER"
+        sleep 3
+    done
 }
-
 # OpenVINO compiles the model on the first inference, not at load. Without this,
 # the operator's first question after setup pays a 30-60s one-time compile.
 # Sending one throwaway completion here moves that cost into setup instead.
 warm_up_model() {
     log "Warming up the model (first-inference compile)"
-    OVMS_URL="http://127.0.0.1:$OVMS_PORT/v3/chat/completions" MODEL_ID="$MODEL_ID" \
+    ROUTER_URL="$ROUTER_URL" SERVED_MODEL="$SERVED_MODEL" \
         python3 - <<'PY' || log "NOTE: model warm-up call did not complete; first query may be slow."
 import json
 import os
 import urllib.request
 
-url = os.environ["OVMS_URL"]
+url = os.environ["ROUTER_URL"] + "/chat/completions"
 payload = json.dumps({
-    "model": os.environ["MODEL_ID"],
+    "model": os.environ["SERVED_MODEL"],
     "messages": [{"role": "user", "content": "ready"}],
     "max_tokens": 1,
 }).encode()
@@ -333,21 +365,18 @@ PY
 }
 
 configure_hermes() {
-    local config_dir backup_path
+    local config_dir
     config_dir=$(dirname "$HERMES_CONFIG")
     mkdir -p "$config_dir"
-    if [[ -f "$HERMES_CONFIG" ]]; then
-        backup_path="$HERMES_CONFIG.bak.$(date -u +%Y%m%dT%H%M%SZ)"
-        cp -p "$HERMES_CONFIG" "$backup_path"
-        log "Backed up Hermes config to $backup_path"
-    fi
 
-    ROOT_DIR="$ROOT_DIR" HERMES_CONFIG="$HERMES_CONFIG" MODEL_ID="$MODEL_ID" \
-        OVMS_PORT="$OVMS_PORT" QSR_WEATHER_MCP_URL="$WEATHER_MCP_URL" \
+    ROOT_DIR="$ROOT_DIR" HERMES_CONFIG="$HERMES_CONFIG" MODEL_ID="$SERVED_MODEL" \
+        LLM_BASE_URL="$ROUTER_URL" QSR_WEATHER_MCP_URL="$WEATHER_MCP_URL" \
         setup_python - <<'PY'
+import hashlib
 import os
 import re
 import socket
+import ssl
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -357,7 +386,7 @@ import yaml
 root = Path(os.environ["ROOT_DIR"])
 config_path = Path(os.environ["HERMES_CONFIG"])
 model_id = os.environ["MODEL_ID"]
-ovms_base_url = f"http://127.0.0.1:{os.environ['OVMS_PORT']}/v3"
+ovms_base_url = os.environ["LLM_BASE_URL"]
 # Base config + remote/external service registrations (kiosk, order accuracy, SAD, ...).
 fragments = [
     root / "agent-config/hermes/config.example.yaml",
@@ -403,6 +432,9 @@ def expand_env(value: Any) -> Any:
 current = {}
 if config_path.exists():
     current = yaml.safe_load(config_path.read_text()) or {}
+# Replaced, not appended: a path left by an older checkout makes skills ambiguous.
+if isinstance(current.get("skills"), dict):
+    current["skills"].pop("external_dirs", None)
 for fragment in fragments:
     current = merge(current, expand_env(replace_repo_path(yaml.safe_load(fragment.read_text()) or {})))
 current["model"]["default"] = model_id
@@ -442,6 +474,96 @@ for name, spec in servers.items():
         spec["enabled"] = alive
         print(f"[qsr-setup] remote MCP '{name}' {'reachable, enabled' if alive else 'unreachable, disabled'} ({spec['url']})")
 
+
+# Host install: do for the `hermes` process what the container does for it.
+# The reachability probe above is a direct socket connect, so Hermes must reach
+# the same hosts directly, and an https service with a self-signed cert (e.g.
+# digital-signage's nginx) must be trusted or its tools never register.
+env_path = config_path.parent / ".env"
+CA_BUNDLE = config_path.parent / "remote-mcp-ca-bundle.pem"
+
+
+def read_env_file() -> dict[str, str]:
+    values: dict[str, str] = {}
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            key, sep, value = line.partition("=")
+            if sep and not key.lstrip().startswith("#"):
+                values[key.strip()] = value.strip()
+    return values
+
+
+def update_env_file(updates: dict[str, str]) -> None:
+    lines = env_path.read_text().splitlines() if env_path.exists() else []
+    kept = [line for line in lines if line.partition("=")[0].strip() not in updates]
+    kept += [f"{key}={value}" for key, value in updates.items()]
+    text = "\n".join(kept) + "\n"
+    # Leave the mtime alone when nothing changed: setup.sh restarts the UI only if it moved.
+    if not env_path.exists() or env_path.read_text() != text:
+        env_path.write_text(text)
+    env_path.chmod(0o600)
+
+
+enabled_remotes = {
+    name: urlparse(str(spec["url"]))
+    for name, spec in servers.items()
+    if isinstance(spec, dict) and spec.get("url") and spec.get("enabled")
+}
+
+# Loopback, the caller's own NO_PROXY and QSR_EXTRA_NO_PROXY (merged by the
+# shell above), entries already in the file, plus the host of every enabled
+# remote service.
+current_env = read_env_file()
+no_proxy = []
+for extra in (os.environ.get("NO_PROXY", "") + "," + os.environ.get("QSR_CALLER_NO_PROXY", "") + "," + os.environ.get("QSR_EXTRA_NO_PROXY", "") + "," + current_env.get("NO_PROXY", "")).split(","):
+    if extra and extra not in no_proxy:
+        no_proxy.append(extra)
+for parsed in enabled_remotes.values():
+    if parsed.hostname and parsed.hostname not in no_proxy:
+        no_proxy.append(parsed.hostname)
+env_updates = {"NO_PROXY": ",".join(no_proxy), "no_proxy": ",".join(no_proxy)}
+
+# Opt-in (QSR_TRUST_REMOTE_CERTS=1) trust-on-first-use for https services: the bundle is
+# system CAs plus the services' current leaf certs. A self-signed service that regenerates
+# its cert on restart needs another setup.sh run. Every cert seen is logged with its SHA-256.
+user_bundle = current_env.get("SSL_CERT_FILE")
+trust_certs = os.environ.get("QSR_TRUST_REMOTE_CERTS", "").lower() in ("1", "true", "yes")
+if user_bundle and Path(user_bundle) != CA_BUNDLE:
+    print(f"[qsr-setup] keeping SSL_CERT_FILE={user_bundle} from {env_path}; not adding service certs")
+else:
+    fetched = []
+    for name, parsed in enabled_remotes.items():
+        if parsed.scheme != "https" or not parsed.hostname:
+            continue
+        endpoint = f"{parsed.hostname}:{parsed.port or 443}"
+        try:
+            pem = ssl.get_server_certificate((parsed.hostname, parsed.port or 443), timeout=5.0)
+        except (OSError, ssl.SSLError) as exc:
+            print(f"[qsr-setup] could not fetch TLS cert for '{name}' ({exc}); it may fail verification if self-signed")
+            continue
+        digest = hashlib.sha256(ssl.PEM_cert_to_DER_cert(pem)).hexdigest()
+        fingerprint = ":".join(digest[i:i + 2] for i in range(0, len(digest), 2)).upper()
+        if trust_certs:
+            fetched.append(pem)
+            print(f"[qsr-setup] trusting TLS cert for remote MCP '{name}' ({endpoint}) SHA-256 {fingerprint}")
+        else:
+            print(f"[qsr-setup] remote MCP '{name}' ({endpoint}) presents TLS cert SHA-256 {fingerprint}; not trusted automatically "
+                  "(rerun with QSR_TRUST_REMOTE_CERTS=1 if it is self-signed and this fingerprint is expected)")
+    if fetched:
+        system_ca = [
+            Path(p) for p in (ssl.get_default_verify_paths().cafile, "/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt")
+            if p and Path(p).is_file()
+        ]
+        base = system_ca[0].read_text() if system_ca else ""
+        bundle_text = base + "\n" + "\n".join(fetched)
+        if not CA_BUNDLE.exists() or CA_BUNDLE.read_text() != bundle_text:
+            CA_BUNDLE.write_text(bundle_text)
+        CA_BUNDLE.chmod(0o600)
+        env_updates["SSL_CERT_FILE"] = str(CA_BUNDLE)
+
+update_env_file(env_updates)
+print(f"[qsr-setup] wrote {', '.join(env_updates)} to {env_path}")
+
 # Derive the lean CLI toolset from the ENABLED services only (reachable remote
 # services), so Hermes' heavy default preset never bloats the prompt,
 # new services are picked up automatically, and disabled/dead remotes are not
@@ -458,21 +580,60 @@ temporary.chmod(0o600)
 temporary.replace(config_path)
 PY
 
-    # Persist the loopback proxy bypass so the runtime `hermes` process reaches
-    # OVMS on 127.0.0.1 even when a corporate proxy is set in the shell.
-    local env_file
-    env_file="$config_dir/.env"
-    touch "$env_file"
-    chmod 600 "$env_file"
-    if ! grep -q '^NO_PROXY=' "$env_file" 2>/dev/null; then
-        {
-            echo "NO_PROXY=localhost,127.0.0.1,::1"
-            echo "no_proxy=localhost,127.0.0.1,::1"
-        } >> "$env_file"
-    fi
-
+    # The proxy bypass (loopback, remote MCP hosts) and the service CA bundle are
+    # persisted to $config_dir/.env by the Python block above.
     hermes config migrate >/dev/null </dev/null
     hermes config check </dev/null
+}
+
+# Event decisions reach the gateway through the `qsr-events` profile: same model, no tools, its
+# own API key (autonomy/hermes_gateway.py reads it from the profile's .env). The container
+# entrypoint creates this profile; without it every event decision fails on a host install.
+configure_events_profile() {
+    local profile=${QSR_HERMES_EVENTS_PROFILE:-qsr-events}
+    local home output
+    home="$(dirname "$HERMES_CONFIG")/profiles/$profile"
+    if [[ ! -f "$home/config.yaml" ]]; then
+        log "Creating Hermes profile $profile for event decisions"
+        # A leftover directory without config.yaml (e.g. from a running gateway) makes this refuse.
+        output=$(hermes profile create "$profile" --no-skills --no-alias </dev/null 2>&1) ||
+            fail "hermes profile create $profile failed: $output (if $home is a leftover, stop 'hermes gateway' and remove it)"
+    fi
+    HERMES_CONFIG="$HERMES_CONFIG" PROFILE_HOME="$home" setup_python - <<'PY'
+import os
+import secrets
+from pathlib import Path
+
+import yaml
+
+main = yaml.safe_load(Path(os.environ["HERMES_CONFIG"]).read_text()) or {}
+home = Path(os.environ["PROFILE_HOME"])
+path = home / "config.yaml"
+profile = (yaml.safe_load(path.read_text()) or {}) if path.is_file() else {}
+for key in ("model", "providers", "custom_providers", "tools"):
+    if key in main:
+        profile[key] = main[key]
+profile["mcp_servers"] = {}
+# Toolset without tools: Hermes can only recommend on untrusted event data.
+profile["platform_toolsets"] = {"api_server": ["context_engine"]}
+profile.setdefault("agent", {}).update({
+    "max_turns": 1,
+    "reasoning_effort": os.environ.get("QSR_ADVISOR_REASONING", "none"),
+})
+path.write_text(yaml.safe_dump(profile, sort_keys=False))
+path.chmod(0o600)
+
+# The multiplexed gateway authenticates /p/<profile>/ with this key. Kept across reruns because a
+# rerun may leave the running gateway (and the key it loaded) in place.
+env_path = home / ".env"
+lines = env_path.read_text().splitlines() if env_path.is_file() else []
+if not any(line.startswith("API_SERVER_KEY=") and line.split("=", 1)[1].strip() for line in lines):
+    lines = [line for line in lines if not line.startswith("API_SERVER_KEY=")]
+    lines.append(f"API_SERVER_KEY={secrets.token_urlsafe(32)}")
+    env_path.write_text("\n".join(lines) + "\n")
+env_path.chmod(0o600)
+print(f"[qsr-setup] Event decisions use Hermes profile {home.name}")
+PY
 }
 
 warn_weather_disabled() {
@@ -554,6 +715,11 @@ build_operator_ui_frontend() {
     local dist="$ROOT_DIR/operator-ui/dist/index.html"
     [[ -f "$dist" ]] && return 0
     [[ -f "$frontend/package.json" ]] || return 0
+    # agent-harness-install installs Node.js through nvm, which is only on PATH in a new shell.
+    if ! command -v npm >/dev/null 2>&1 && [[ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]]; then
+        # shellcheck disable=SC1091
+        source "${NVM_DIR:-$HOME/.nvm}/nvm.sh" >/dev/null 2>&1 || true
+    fi
     if ! command -v npm >/dev/null 2>&1; then
         log "operator-ui/dist is missing and npm is not installed; the UI will return 503 until you run: cd operator-ui/frontend && npm ci && npm run build"
         return 0
@@ -577,12 +743,26 @@ start_operator_ui() {
     local probe_host="$QSR_UI_HOST"
     [[ "$probe_host" == "0.0.0.0" ]] && probe_host="127.0.0.1"
     local url="http://$probe_host:$QSR_UI_PORT/health"
-    local pid current_args current_weather
+    local pid current_args current_weather current_model
+    # The agent runtime reads proxy bypass and the service CA bundle from ~/.hermes/.env when it
+    # starts, so a UI started before those changed must be replaced. Only the bundle that
+    # configure_hermes manages is handed to the UI; the harness install stage never sees it.
+    local hermes_dir env_file ca_bundle
+    local -a ui_env=()
+    hermes_dir=$(dirname "$HERMES_CONFIG")
+    env_file="$hermes_dir/.env"
+    ca_bundle="$hermes_dir/remote-mcp-ca-bundle.pem"
+    if grep -qx "SSL_CERT_FILE=$ca_bundle" "$env_file" 2>/dev/null; then
+        ui_env=("SSL_CERT_FILE=$ca_bundle")
+    fi
     pid=$(cat "$pid_file" 2>/dev/null || true)
     if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
         current_weather=$(tr '\0' '\n' </proc/"$pid"/environ 2>/dev/null | sed -n 's/^QSR_WEATHER_MCP_URL=//p' || true)
+        current_model=$(tr '\0' '\n' </proc/"$pid"/environ 2>/dev/null | sed -n 's/^QSR_MODEL_BASE_URL=//p' || true)
         if curl -fsS --max-time 2 "$url" >/dev/null 2>&1 &&
-            [[ "$current_weather" == "$WEATHER_MCP_URL" ]]; then
+            [[ "$current_weather" == "$WEATHER_MCP_URL" ]] &&
+            [[ "$current_model" == "$ROUTER_URL" ]] &&
+            [[ ! "$env_file" -nt "$pid_file" && ! "$ca_bundle" -nt "$pid_file" ]]; then
             log "Operator UI already running (pid $pid, http://$QSR_UI_HOST:$QSR_UI_PORT)"
             return 0
         fi
@@ -599,8 +779,9 @@ start_operator_ui() {
     fi
     log "Starting operator UI on http://$QSR_UI_HOST:$QSR_UI_PORT"
     QSR_UI_HOST="$QSR_UI_HOST" QSR_UI_PORT="$QSR_UI_PORT" \
-        QSR_WEATHER_MCP_URL="$WEATHER_MCP_URL" \
-        nohup "$MCP_VENV_PY" -u "$ui" > "$log_file" 2>&1 &
+        QSR_WEATHER_MCP_URL="$WEATHER_MCP_URL" QSR_MODEL_BASE_URL="$ROUTER_URL" \
+        QSR_ADVISOR_BASE_URL="http://127.0.0.1:$OVMS_PORT/v3" QSR_ADVISOR_MODEL="$SERVED_MODEL" \
+        nohup env ${ui_env[@]+"${ui_env[@]}"} "$MCP_VENV_PY" -u "$ui" > "$log_file" 2>&1 &
     echo $! > "$pid_file"
     if ! wait_for_operator_ui "$url" "$pid_file"; then
         pid=$(cat "$pid_file" 2>/dev/null || true)
@@ -634,17 +815,38 @@ warm_up_operator_ui() {
 }
 
 validate_stack() {
+    export PATH="$HOME/.local/bin:$PATH"
     require_command hermes "Run scripts/setup.sh without --check to install Hermes."
-    [[ -f "$MODEL_ROOT/$MODEL_ID/config.json" ]] ||
-        fail "Model is missing from $MODEL_ROOT/$MODEL_ID."
-    docker inspect -f '{{.State.Running}}' "$OVMS_CONTAINER" 2>/dev/null | grep -qx true ||
-        fail "Container $OVMS_CONTAINER is not running."
-    wait_for_ovms || fail "OVMS did not report $MODEL_ID as available."
+    local name
+    for name in "$HARNESS_OVMS_CONTAINER" "$HARNESS_IR_CONTAINER"; do
+        docker inspect -f '{{.State.Running}}' "$name" 2>/dev/null | grep -qx true ||
+            fail "Container $name is not running; rerun scripts/setup.sh."
+    done
+    verify_ovms_on_gpu
+    wait_for_router || fail "The Inference Router did not report $SERVED_MODEL as available."
 
     [[ -x "$MCP_VENV_PY" ]] || ensure_mcp_venv
     log "Running model-independent service tests"
     PYTHONDONTWRITEBYTECODE=1 "$MCP_VENV_PY" -m unittest discover \
         -s "$WEATHER_SERVICE_DIR/tests"
+}
+
+# The harness falls back to the CPU when Docker has no GPU access, which this stack cannot use:
+# the container must have a render node and OVMS must report the GPU as an available device.
+verify_ovms_on_gpu() {
+    local devices available
+    devices=$(docker inspect -f '{{range .HostConfig.Devices}}{{.PathOnHost}} {{end}}' "$HARNESS_OVMS_CONTAINER" 2>/dev/null || true)
+    available=$(docker logs "$HARNESS_OVMS_CONTAINER" 2>&1 | grep -o 'Available devices for Open VINO: .*' | tail -n 1 || true)
+    if [[ $devices == */dev/dri/* && $available == *GPU* ]]; then
+        log "OVMS runs on the Intel GPU (${devices% })"
+        return 0
+    fi
+    local reason="container devices: '${devices:-none}'; OVMS reports: '${available:-no device list in logs}'"
+    if [[ $ALLOW_CPU_INFERENCE == 1 ]]; then
+        log "WARNING: OVMS is not using the GPU ($reason); continuing because ALLOW_CPU_INFERENCE=1."
+        return 0
+    fi
+    fail "OVMS is not running on the Intel GPU ($reason). Check the GPU driver and that this user can access /dev/dri, or set ALLOW_CPU_INFERENCE=1 to accept CPU inference."
 }
 
 main() {
@@ -662,13 +864,15 @@ main() {
     if [[ $CHECK_ONLY == false ]]; then
         ensure_build_packages
         ensure_helper_venv
-        install_hermes
-        download_model
-        start_ovms
+        backup_hermes_config
+        install_inference_and_hermes
+        wait_for_ovms_model
+        wait_for_router
         warm_up_model
         ensure_mcp_venv
         start_weather_service
         configure_hermes
+        configure_events_profile
     fi
     validate_stack
     if [[ $CHECK_ONLY == false ]]; then

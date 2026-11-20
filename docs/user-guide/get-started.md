@@ -58,6 +58,10 @@ the published image, use `make up REGISTRY=false`; see
 | `qsr-agent` | Operator UI and agent runtime |
 | `weather` | Weather service (simulated by default) |
 
+An optional fourth container, `inference-router`, puts the Inference Router
+between the agent runtime and the model server; see `COMPOSE_PROFILES` in
+[Configuration](./get-started/configuration.md#main-settings).
+
 The first start loads the model onto the GPU and warms it up. This can take a
 few minutes. Check progress with:
 
