@@ -1,6 +1,6 @@
 ---
 name: loss-prevention
-description: "Answer self-checkout loss-prevention, age-mix, and VLM item-recognition questions using Loss Prevention MCP read tools for loss history, scenario/lane filters, counts, lanes, age-range distribution, and inventory-matched items."
+description: "Answer self-checkout loss-prevention (fake scans, hidden items, items in basket, product switching, sweethearting, multi-product), age-mix, and VLM item-recognition questions using Loss Prevention MCP read tools for loss history, scenario/lane filters, counts, lanes, age-range distribution, and inventory-matched items."
 version: 1.0.0
 platforms: [linux]
 metadata:
@@ -21,9 +21,36 @@ call is available.
 - Each **item verification** (VLM workload) has `item_name`, `matched`, `lane`,
   and `camera_id`. `matched` = true means the item is in the store inventory list.
 
-Loss `scenario` is one of: `items_in_basket`, `hidden_items`,
-`fake_scan_detection`, `multi_product_identification`, `product_switching`,
-`sweethearting`. Age ranges are `0-18`, `18-25`, `25-35`, `35-45`, `45-60`, `60+`.
+Age ranges are `0-18`, `18-25`, `25-35`, `35-45`, `45-60`, `60+`.
+
+## Scenario, Lane, and Time Filters
+
+`scenario` accepts only the six values below. Map the operator's wording to one
+of them and pass that exact value, never the operator's own spelling:
+
+| Operator wording | `scenario` value |
+|---|---|
+| fake scan, fake-scan, fake scans | `fake_scan_detection` |
+| hidden item, hidden items | `hidden_items` |
+| item in basket, items in basket | `items_in_basket` |
+| product switching, switched products, product switch | `product_switching` |
+| sweethearting, sweet-hearting | `sweethearting` |
+| multi-product, multiple product identification | `multi_product_identification` |
+
+- When the operator names a loss type, always pass its `scenario`. Events of one
+  scenario are not evidence of another: never answer about a named type from an
+  unfiltered list, and never report `items_in_basket` events as fake scans,
+  product switching, or sweethearting.
+- If the wording fits none of the six, say the service does not report that
+  type and name the six it does.
+- Lane ids look like `lane-1`. Write "lane 1" or "lane1" as `lane-1`.
+- Pass `period`, `start_time`, or `end_time` only when the operator's message
+  names a time ("today", "last hour", a date). "Any ...?" or "Did ...?" with no
+  time means the whole current log: pass no time argument.
+- If a tool returns "Unknown ... Valid values: [...]", call the same tool again
+  at once with the matching listed value and keep the other arguments. Never end
+  the turn without an answer: if no listed value fits, tell the operator the
+  valid values.
 
 ## Contract Discovery
 
@@ -53,9 +80,7 @@ to perform those actions.
 
 Prefer the structured filters (`scenario`, `lane`, time range) over free text.
 Use exact scenario names and lane ids (for example `lane-1`); phrases like
-"register 1" or "checkout" are not lane ids. If a tool returns an
-"Unknown ... Valid values" error, retry with a listed value instead of reporting
-no records.
+"register 1" or "checkout" are not lane ids.
 
 For "last hour", "today", or "last 24 hours", pass `period` (`last_hour`,
 `today`, `last_24_hours`); the server computes the window from its own clock. Never
