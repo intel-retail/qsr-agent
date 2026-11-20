@@ -17,6 +17,7 @@ Environment:
     QSR_CHAT_IDLE_MINUTES start a fresh chat conversation after this idle time; 0 = never (default 30)
     QSR_AUTONOMY_DB persistent proposal database
     QSR_WARMUP    run one background warm-up turn at startup (default true)
+    QSR_MODEL_BASE_URL model endpoint Hermes calls (OVMS or the router); when set, /ready, /status and chat check it
     QSR_LEARNING_DIR learning journal and learned skills (default ./learning)
     QSR_LEARN_THRESHOLD unlearnt operator responses per service before the UI offers learning (default 20)
     QSR_LEARN_AUTO   start the learner automatically at the threshold; approval stays manual (default false)
@@ -38,6 +39,7 @@ import time
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import urllib.request
 from urllib.parse import unquote
 
 _ROOT_PATH = Path(__file__).resolve().parent.parent
@@ -78,6 +80,8 @@ MAX_BODY_BYTES = int(os.environ.get("QSR_MAX_BODY_BYTES", "65536"))
 MAX_QUESTION_CHARS = int(os.environ.get("QSR_MAX_QUESTION_CHARS", "4000"))
 WARMUP_ENABLED = os.environ.get("QSR_WARMUP", "true").strip().lower() not in {"0", "false", "no"}
 WARMUP_PROMPT = os.environ.get("QSR_WARMUP_PROMPT", "Warm up. Reply with OK only.")
+# Unset skips the model endpoint probe.
+MODEL_BASE_URL = os.environ.get("QSR_MODEL_BASE_URL", "").rstrip("/")
 # Set once warm-up concludes; /ready (and the container healthcheck) gates on it.
 WARMUP_DONE = threading.Event()
 if not WARMUP_ENABLED:
@@ -120,6 +124,27 @@ CHAT_LOCK = threading.Lock()
 
 def operator_gateway() -> HermesGateway:
     return HermesGateway.operator(HERMES_TIMEOUT)
+
+
+_MODEL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+_MODEL_CACHE: dict[str, float | bool] = {"ts": -1e9, "ok": True}
+_MODEL_TTL = 5.0
+
+
+def model_reachable() -> bool:
+    """Whether the model endpoint lists models; Hermes otherwise retries a dead endpoint for minutes."""
+    if not MODEL_BASE_URL:
+        return True
+    now = time.monotonic()
+    if now - float(_MODEL_CACHE["ts"]) < _MODEL_TTL:
+        return bool(_MODEL_CACHE["ok"])
+    try:
+        with _MODEL_OPENER.open(f"{MODEL_BASE_URL}/models", timeout=3) as response:
+            ok = response.status == 200
+    except (OSError, ValueError):
+        ok = False
+    _MODEL_CACHE.update(ts=now, ok=ok)
+    return ok
 
 
 def in_scope(question: str, decision: dict | None) -> bool:
@@ -464,9 +489,16 @@ def check_status(force: bool = False) -> dict:
     return {"ok": True, "services": result}
 
 
+def status_payload(force: bool) -> dict:
+    return {**check_status(force=force), "model": {"ok": model_reachable()}}
+
+
 def stream_hermes(question: str):
     """Run one turn in the always-on operator session, yielding answer text as it streams."""
     yield {"event": "start", "message": "Connecting to Hermes..."}
+    if not model_reachable():
+        yield {"event": "error", "error": "The model endpoint is not reachable; check the model server and Inference Router."}
+        return
     gateway = operator_gateway()
     parts: list[str] = []
     calls: list[dict] = []
@@ -560,15 +592,17 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/health":
             self._send(200, b'{"status":"ok"}', "application/json")
         elif self.path == "/ready":
-            if WARMUP_DONE.is_set():
-                self._send(200, b'{"status":"ready"}', "application/json")
-            else:
+            if not WARMUP_DONE.is_set():
                 self._send(503, b'{"status":"warming"}', "application/json")
+            elif not model_reachable():
+                self._send(503, b'{"status":"model unavailable"}', "application/json")
+            else:
+                self._send(200, b'{"status":"ready"}', "application/json")
         elif self.path == "/servers":
             body = json.dumps(list_servers()).encode("utf-8")
             self._send(200, body, "application/json")
         elif self.path == "/status" or self.path == "/status?force=1":
-            body = json.dumps(check_status(force=self.path.endswith("force=1"))).encode("utf-8")
+            body = json.dumps(status_payload(self.path.endswith("force=1"))).encode("utf-8")
             self._send(200, body, "application/json")
         elif self.path == "/autonomy/status":
             body = json.dumps({"ok": True, **AUTONOMY.status()}).encode("utf-8")

@@ -9,7 +9,7 @@
 | `Docker daemon is not available to this user` | Add your user to the `docker` group, then log out and back in. |
 | `qsr-agent` stays `starting` for several minutes | The model is loading and warming up on the GPU. Follow progress with `make logs`. |
 | `ovms` restarts repeatedly | Check `docker compose logs ovms`. Common causes are insufficient GPU memory and a GPU device the container cannot access. |
-| Agent cannot reach the model | Check `docker compose logs ovms`; the model must be loaded. With the `router` profile, also check `docker compose logs inference-router`: the router must list `MODEL_ID` as available and be healthy (`make ps`). |
+| Agent cannot reach the model | Check `docker compose logs ovms`; the model must be loaded. With the `router` profile, also check `docker compose logs inference-router`: the router must list `MODEL_ID` as available and be healthy (`make ps`). While the model endpoint is unreachable, `/ready` returns 503 (`model unavailable`), `/status` reports `model.ok: false`, and chat questions fail immediately. |
 | Host install (`scripts/setup.sh`): `agent-harness-install-ovms` restarts with `source_model parameter is required` | The harness runs OVMS with `--config_path`, which rejects model flags. Leave `HARNESS_OVMS_EXTRA_ARGS` empty; OVMS picks the tool-call parser from the model's chat template. |
 | Settings changes have no effect | Edit `.env.example`, not `.env`. `make up` overwrites `.env`. |
 | Image pull fails | Check registry access and proxy settings, or build locally with `make up REGISTRY=false`. |

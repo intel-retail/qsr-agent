@@ -8,12 +8,13 @@
 #   KEEP_DATA=1 scripts/uninstall.sh     # keep ~/.hermes (config/history)
 #   KEEP_UV=1  scripts/uninstall.sh      # keep uv/uvx if bundled under ~/.hermes/bin
 #   REMOVE_OVMS=0 scripts/uninstall.sh   # leave the OVMS/router containers running
-#   REMOVE_HARNESS=0 scripts/uninstall.sh  # keep <repo>/.harness and ~/.agent-harness-install
-#   REMOVE_MODELS=1 scripts/uninstall.sh   # also delete the downloaded models (MODEL_ROOT, several GB)
+#   REMOVE_HARNESS=0 scripts/uninstall.sh  # keep <repo>/.harness, ~/.agent-harness-install and its PATH block in the shell profile
+#   REMOVE_MODELS=1 scripts/uninstall.sh   # also delete this model (MODEL_ROOT/MODEL_ID) and the harness config.json
 #   REMOVE_IMAGES=1 scripts/uninstall.sh   # also delete the OVMS and Inference Router images
 #
-# Kept on purpose: Node.js installed through nvm (~/.nvm) and the repository's .venv/
-# directories; delete them yourself if nothing else uses them.
+# Kept on purpose: Node.js installed through nvm (~/.nvm, with the lines nvm's installer added to
+# your shell profile) and the repository's .venv/ directories; delete them yourself if nothing
+# else uses them.
 set -Eeuo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -30,6 +31,7 @@ MODEL_ROOT=${MODEL_ROOT:-$(sed -n 's/^MODEL_ROOT=//p' "$ROOT_DIR/.env.example" 2
 MODEL_ROOT=${MODEL_ROOT:-./models}
 [[ $MODEL_ROOT == /* ]] || MODEL_ROOT="$ROOT_DIR/${MODEL_ROOT#./}"
 MODELS_DIR=${HARNESS_MODELS_DIR:-$MODEL_ROOT}
+MODEL_ID=${MODEL_ID:-$(sed -n 's/^MODEL_ID=//p' "$ROOT_DIR/.env.example" 2>/dev/null)}
 UI_PID_FILE=${UI_PID_FILE:-/tmp/qsr-operator-ui.pid}
 KEEP_DATA=${KEEP_DATA:-0}
 KEEP_UV=${KEEP_UV:-0}
@@ -145,22 +147,43 @@ remove_harness() {
         find "$HARNESS_STATE_DIR" -mindepth 1 -maxdepth 1 ! -name models -exec rm -rf {} +
         [[ -d "$HARNESS_STATE_DIR/models" ]] || rmdir "$HARNESS_STATE_DIR" 2>/dev/null || true
     fi
+    remove_harness_path_block
+}
+
+# The harness appends a marker-delimited PATH block to the shell profile; nvm's own lines stay.
+remove_harness_path_block() {
+    local profile
+    for profile in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile" "$HOME/.config/fish/config.fish" "$HOME/.tcshrc" "$HOME/.cshrc"; do
+        [[ -f $profile ]] || continue
+        grep -qx '# agent-harness-install PATH setup' "$profile" || continue
+        log "Removing the agent-harness-install PATH block from $profile"
+        sed -i --follow-symlinks '/^# agent-harness-install PATH setup$/,/^# end agent-harness-install PATH setup$/d' "$profile"
+    done
 }
 
 remove_models() {
     local dir
     if [[ $REMOVE_MODELS != 1 ]]; then
         for dir in "$MODELS_DIR" "$HARNESS_STATE_DIR/models"; do
-            [[ -d $dir ]] && log "Models kept in $dir (REMOVE_MODELS=1 deletes them)"
+            [[ -d $dir ]] && log "Models kept in $dir (REMOVE_MODELS=1 deletes $MODEL_ID and the harness config.json)"
         done
         return 0
     fi
-    for dir in "$MODELS_DIR" "$HARNESS_STATE_DIR/models"; do
-        if [[ -d $dir ]]; then
-            log "Deleting models in $dir"
-            rm -rf "$dir"
-        fi
-    done
+    # MODEL_ROOT is shared with `make up`: remove only what this setup put there.
+    if [[ -n $MODEL_ID && $MODEL_ID != /* && $MODEL_ID != *..* && -d "$MODELS_DIR/$MODEL_ID" ]]; then
+        log "Deleting model $MODELS_DIR/$MODEL_ID"
+        rm -rf -- "${MODELS_DIR:?}/$MODEL_ID"
+        rmdir "$MODELS_DIR/${MODEL_ID%/*}" 2>/dev/null || true
+    fi
+    if [[ -f "$MODELS_DIR/config.json" ]]; then
+        log "Deleting harness model config $MODELS_DIR/config.json"
+        rm -f -- "$MODELS_DIR/config.json"
+    fi
+    rmdir "$MODELS_DIR" 2>/dev/null || true
+    if [[ -d "$HARNESS_STATE_DIR/models" ]]; then
+        log "Deleting models in $HARNESS_STATE_DIR/models"
+        rm -rf "$HARNESS_STATE_DIR/models"
+    fi
     rmdir "$HARNESS_STATE_DIR" 2>/dev/null || true
 }
 
@@ -189,7 +212,7 @@ main() {
     remove_harness
     remove_models
     verify
-    log "Done. Kept: Node.js under ~/.nvm (if the harness installed it) and the repository's .venv/ directories."
+    log "Done. Kept: Node.js under ~/.nvm and the lines nvm added to your shell profile (if the harness installed it), and the repository's .venv/ directories."
 }
 
 main "$@"

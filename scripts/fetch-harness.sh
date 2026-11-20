@@ -8,13 +8,12 @@
 #
 # Usage: scripts/fetch-harness.sh <dest-dir>
 # Bump HARNESS_INSTALL_REF to adopt a newer installer; it must be a full commit SHA.
-# The current pin is the head of open-edge-platform/edge-ai-libraries#3935 (overridable Hermes
-# pin, which setup.sh relies on); move it to the merge commit once that PR lands. GitHub serves
-# PR commits by SHA from the base repository.
+# The current pin is the merge commit of open-edge-platform/edge-ai-libraries#3935, which added
+# the overridable Hermes pin that setup.sh relies on.
 set -Eeuo pipefail
 
 HARNESS_INSTALL_REPO=${HARNESS_INSTALL_REPO:-https://github.com/open-edge-platform/edge-ai-libraries.git}
-HARNESS_INSTALL_REF=${HARNESS_INSTALL_REF:-8e932b632c2ccb5b889794f6bcefc1cdafce1a80}
+HARNESS_INSTALL_REF=${HARNESS_INSTALL_REF:-2c6b49330723a04d2cc39ae03421fea258d83bf3}
 HARNESS_SUBDIR=frameworks/agent-harness-install
 dest=${1:?usage: fetch-harness.sh <dest-dir>}
 

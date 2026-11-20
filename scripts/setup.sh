@@ -569,11 +569,13 @@ PY
 # entrypoint creates this profile; without it every event decision fails on a host install.
 configure_events_profile() {
     local profile=${QSR_HERMES_EVENTS_PROFILE:-qsr-events}
-    local home
+    local home output
     home="$(dirname "$HERMES_CONFIG")/profiles/$profile"
     if [[ ! -f "$home/config.yaml" ]]; then
         log "Creating Hermes profile $profile for event decisions"
-        hermes profile create "$profile" --no-skills --no-alias </dev/null >/dev/null
+        # A leftover directory without config.yaml (e.g. from a running gateway) makes this refuse.
+        output=$(hermes profile create "$profile" --no-skills --no-alias </dev/null 2>&1) ||
+            fail "hermes profile create $profile failed: $output (if $home is a leftover, stop 'hermes gateway' and remove it)"
     fi
     HERMES_CONFIG="$HERMES_CONFIG" PROFILE_HOME="$home" setup_python - <<'PY'
 import os
@@ -719,7 +721,7 @@ start_operator_ui() {
     local probe_host="$QSR_UI_HOST"
     [[ "$probe_host" == "0.0.0.0" ]] && probe_host="127.0.0.1"
     local url="http://$probe_host:$QSR_UI_PORT/health"
-    local pid current_args current_weather
+    local pid current_args current_weather current_model
     # The agent runtime reads proxy bypass and the service CA bundle from ~/.hermes/.env when it
     # starts, so a UI started before those changed must be replaced. Only the bundle that
     # configure_hermes manages is handed to the UI; the harness install stage never sees it.
@@ -734,8 +736,10 @@ start_operator_ui() {
     pid=$(cat "$pid_file" 2>/dev/null || true)
     if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
         current_weather=$(tr '\0' '\n' </proc/"$pid"/environ 2>/dev/null | sed -n 's/^QSR_WEATHER_MCP_URL=//p' || true)
+        current_model=$(tr '\0' '\n' </proc/"$pid"/environ 2>/dev/null | sed -n 's/^QSR_MODEL_BASE_URL=//p' || true)
         if curl -fsS --max-time 2 "$url" >/dev/null 2>&1 &&
             [[ "$current_weather" == "$WEATHER_MCP_URL" ]] &&
+            [[ "$current_model" == "$ROUTER_URL" ]] &&
             [[ ! "$env_file" -nt "$pid_file" && ! "$ca_bundle" -nt "$pid_file" ]]; then
             log "Operator UI already running (pid $pid, http://$QSR_UI_HOST:$QSR_UI_PORT)"
             return 0
@@ -753,7 +757,7 @@ start_operator_ui() {
     fi
     log "Starting operator UI on http://$QSR_UI_HOST:$QSR_UI_PORT"
     QSR_UI_HOST="$QSR_UI_HOST" QSR_UI_PORT="$QSR_UI_PORT" \
-        QSR_WEATHER_MCP_URL="$WEATHER_MCP_URL" \
+        QSR_WEATHER_MCP_URL="$WEATHER_MCP_URL" QSR_MODEL_BASE_URL="$ROUTER_URL" \
         QSR_ADVISOR_BASE_URL="http://127.0.0.1:$OVMS_PORT/v3" QSR_ADVISOR_MODEL="$SERVED_MODEL" \
         nohup env ${ui_env[@]+"${ui_env[@]}"} "$MCP_VENV_PY" -u "$ui" > "$log_file" 2>&1 &
     echo $! > "$pid_file"

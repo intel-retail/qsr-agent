@@ -61,7 +61,9 @@ In addition to the requirements above:
 - Docker must already be installed and usable without `sudo`; `setup.sh`
   stops otherwise and never installs Docker itself.
 - Node.js is installed into `~/.nvm` by the harness (no `sudo`) when the
-  host has none; it is used to build the operator UI.
+  host has none; it is used to build the operator UI. The nvm installer adds
+  lines to your shell profile (`~/.bashrc`), and the harness adds a PATH block
+  for `~/.local/bin`.
 - `python3-venv` must be installed, or passwordless `sudo` must be available
   so the harness can install it. `setup.sh` runs unattended with standard
   input closed, so a `sudo` password prompt cannot be answered.
@@ -71,9 +73,11 @@ In addition to the requirements above:
   (`ALLOW_CPU_INFERENCE=1` accepts CPU inference for debugging only).
 
 `scripts/uninstall.sh` removes Hermes, the containers, the harness checkout
-and state, and the operator UI. Models (`REMOVE_MODELS=1`) and the container
-images (`REMOVE_IMAGES=1`) are kept unless requested; Node.js under `~/.nvm`
-is always kept.
+and state (including its PATH block in your shell profile), and the operator
+UI. The model (`REMOVE_MODELS=1`, only `MODEL_ROOT/MODEL_ID` and the harness
+`config.json`, because `MODEL_ROOT` is shared with `make up`) and the container
+images (`REMOVE_IMAGES=1`) are kept unless requested. Node.js under `~/.nvm`
+and the lines nvm added to your shell profile are always kept.
 
 ---
 
