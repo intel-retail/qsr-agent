@@ -8,31 +8,30 @@ from .controller import AutonomyController
 from .discovery import discover, hermes_servers
 from .event_agent import HermesEventAgent
 from .learning import learning_dir
-from .mcp import HttpMcpClient, StdioMcpClient
+from .mcp import HttpMcpClient
 from .registry import AutonomyRegistry, load_extensions
 from .store import ProposalStore
-from .service_capabilities import MergedAccuracyClient, register_defaults, register_learned_skills
+from .service_capabilities import (
+    MergedAccuracyClient, register_defaults, register_learned_skills, register_skills,
+)
+
+
+def _env_names(variable: str) -> list[str]:
+    return [name.strip() for name in os.environ.get(variable, "").split(",") if name.strip()]
 
 
 def build_registry(project_root: Path) -> AutonomyRegistry:
     """Catalog of tools and skills, including approved learned skills."""
-    python = Path(os.environ.get("QSR_MCP_PYTHON", project_root / ".venv/mcp/bin/python"))
-    server = Path(
-        os.environ.get("QSR_KIOSK_SERVER", project_root / "tests/mcp-services/kiosk_server.py")
-    )
     registry = AutonomyRegistry()
     registry.catalog.restaurant_id = os.environ.get("QSR_RESTAURANT_ID", "qsr-001")
-    # A remote kiosk replaces the local simulation for event decisions too, so chat and approvals act on one kiosk.
+    # Kiosk and Order Accuracy are remote services; without a URL their capabilities are not registered.
     kiosk_url = os.environ.get("QSR_KIOSK_MCP_URL", "").strip()
-    kiosk_client = HttpMcpClient(kiosk_url) if kiosk_url else StdioMcpClient(python, server)
-    # Remote Order Accuracy (take-away and/or dine-in) replaces the local simulation.
+    kiosk_client = HttpMcpClient(kiosk_url) if kiosk_url else None
     accuracy_urls = [url for url in (os.environ.get(f"QSR_ORDER_ACCURACY_{venue}_MCP_URL", "").strip()
                                      for venue in ("TAKE_AWAY", "DINE_IN")) if url]
     accuracy_client = (
         MergedAccuracyClient([HttpMcpClient(url) for url in accuracy_urls]) if len(accuracy_urls) > 1
-        else HttpMcpClient(accuracy_urls[0]) if accuracy_urls
-        else StdioMcpClient(python, Path(os.environ.get(
-            "QSR_ACCURACY_SERVER", project_root / "tests/mcp-services/order_accuracy_server.py")))
+        else HttpMcpClient(accuracy_urls[0]) if accuracy_urls else None
     )
     weather_url = os.environ.get("QSR_WEATHER_MCP_URL", "http://127.0.0.1:8090/mcp").strip()
     weather_client = HttpMcpClient(weather_url) if weather_url else None
@@ -41,13 +40,13 @@ def build_registry(project_root: Path) -> AutonomyRegistry:
         registry,
         os.environ.get("QSR_AUTONOMY_MODULES", "").split(","),
     )
-    disabled_tools = [name.strip() for name in os.environ.get(
-        "QSR_AUTONOMY_DISABLED_TOOLS", ""
-    ).split(",") if name.strip()]
+    disabled_tools = _env_names("QSR_AUTONOMY_DISABLED_TOOLS")
     registry.catalog.remove_tools(*disabled_tools)
-    for name in os.environ.get("QSR_AUTONOMY_DISABLED_SKILLS", "").split(","):
-        registry.catalog.remove_skill(name.strip())
+    disabled_skills = _env_names("QSR_AUTONOMY_DISABLED_SKILLS")
+    for name in disabled_skills:
+        registry.catalog.remove_skill(name)
     discover(registry.catalog, hermes_servers(), disabled_tools)
+    register_skills(registry.catalog, project_root, disabled_skills)
     register_learned_skills(registry.catalog, learning_dir(project_root) / "skills")
     return registry
 
@@ -61,14 +60,14 @@ def build_controller(root: Path | None = None) -> AutonomyController:
     )
     registry = build_registry(project_root)
     learned = learning_dir(project_root) / "skills"
-    disabled = [name.strip() for name in os.environ.get("QSR_AUTONOMY_DISABLED_TOOLS", "").split(",")]
+    disabled = _env_names("QSR_AUTONOMY_DISABLED_TOOLS")
+    disabled_skills = _env_names("QSR_AUTONOMY_DISABLED_SKILLS")
 
     def refresh_skills() -> None:
         # Services that come online later (or were unreachable at start) join without a restart.
         discover(registry.catalog, hermes_servers(), disabled)
+        register_skills(registry.catalog, project_root, disabled_skills)
         register_learned_skills(registry.catalog, learned)
 
-    registry.register_event(HermesEventAgent(
-        HermesRunner(), registry.catalog, refresh_skills=refresh_skills,
-    ))
+    registry.register_event(HermesEventAgent(HermesRunner(), registry.catalog, refresh_skills=refresh_skills))
     return registry.build(store=ProposalStore(state_path))

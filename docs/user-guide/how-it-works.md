@@ -5,7 +5,7 @@
 ## Components
 
 | Component | Role |
-|---|---|
+| --- | --- |
 | Operator UI | Web interface for chat, connected-service status, decisions, approvals, and learning. Also receives events from store systems. |
 | Agent runtime (Hermes) | Understands the request, picks the relevant store skills, calls store services, and composes the answer. Keeps operator preferences in memory. |
 | OpenVINO™ Model Server | Serves the Qwen3 INT4 language model set by `MODEL_ID` on the Intel® GPU through an OpenAI-compatible API. |
@@ -47,13 +47,13 @@ Store event -> queue -> agent gathers context -> no action  (reason shown)
    minutes if nobody acts on it.
 6. On approval, the owning service validates and applies the action.
 
-Order-accuracy remakes are operator-led until the agent has learned when to
-propose them: while the event is shown, tell the agent in chat to remake the
-order. Take-away and dine-in are separate MCP servers, so the agent sends the
-remake to the one named in the event's `data.venue`.
-
 There is no fixed rule such as "rain means add hot drinks". The agent decides
 from the current context, and the operator stays in control.
+
+A service's skill opts into event handling by declaring, in its `SKILL.md`
+frontmatter under `metadata.qsr`, the event types it responds to and the
+service's own tools it may use; the skill text carries the decision rules. An
+event that no registered skill covers ends as "no action" without a model run.
 
 ## Learning From Operators
 
@@ -75,20 +75,19 @@ what the operator did. Records are added live from:
 - **The service itself**: `POST /learning/responses`, for actions taken on the
   service's own screen.
 
-Events without a `service` field are assigned one from their type (for
-example `order_mismatch` → `accuracy`). Add more mappings with
-`QSR_EVENT_SERVICES=table_dirty=table`.
+Events without a `service` field are assigned one from their event type. Add
+mappings with `QSR_EVENT_SERVICES=<event_type>=<service>`.
 
-Examples of what can be learned (from `learning/simulated/event_op_response.jsonl`):
+For example, if operators switch the kiosks to express mode whenever a
+`queue_count_changed` event reports a long queue, learning proposes a rule such
+as "queue count of 8 or more in standard mode: switch to express mode". Each
+rule is checked against the recorded events and kept only if the records
+support it: taught at least twice, in at least 60% of matching events, and
+rejected less often than taught.
 
-| Service | Event | Learned rule (example) |
-|---|---|---|
-| Kiosk | `queue_count_changed` | Queue ≥ 10 in standard mode → express; wait ≥ 8 min → open a kiosk; queue ≥ 8 → upsell off; short twice → back to normal |
-| Weather | `weather_changed` | Raining and hot drinks off → hot drinks on; rain stops → hot drinks off; ≥ 29 °C → shake on |
-| Order accuracy | `order_mismatch_detected` | Missing item at the pickup counter with confidence ≥ 0.9 → remake that order (order id taken from the event) |
-
-Rules can test list items by id (for example whether `tea` is already on the
-menu) and copy an event value into an argument (for example the order id).
+A learned skill lists when to act. It cannot forbid an action, so the base
+skill may still propose one the operator usually rejects; reject it with a
+reason so the next learning run sees it.
 
 ### Adding a Service (Plug and Play)
 
@@ -108,22 +107,31 @@ a minute, so a service can start before or after the agent.
 
 The service should send its events with `"service": "<server name>"` (or map
 the event type with `QSR_EVENT_SERVICES`). Tools listed in
-`QSR_AUTONOMY_DISABLED_TOOLS` are not added. The `order-accuracy-take-away` and
-`order-accuracy-dine-in` servers are journaled and learned as one `accuracy`
-service.
+`QSR_AUTONOMY_DISABLED_TOOLS` are not added.
 
 ## Stored Data
 
 All state is kept in Docker volumes on the edge system:
 
 | Volume | Contents |
-|---|---|
+| --- | --- |
 | `autonomy-state` | Event queue, decisions, and approvals |
 | `learning` | Operator response history, learned guidance, and agent memory |
 | `weather-state` | Current simulated weather |
 
 `make down` keeps the volumes. To remove all data as well, run
 `docker compose down -v`.
+
+The repository's `learning/` folder holds only the sample history. Learned
+skills are written to `learning/skills/learned-<service>/SKILL.md` inside the
+`learning` volume, next to the journal (`learning/journal/`) and learning runs
+(`learning/runs/`). To read or back them up:
+
+```bash
+docker compose exec qsr-agent ls /opt/qsr/learning/skills
+docker compose exec qsr-agent cat /opt/qsr/learning/skills/learned-<service>/SKILL.md
+docker compose cp qsr-agent:/opt/qsr/learning ./learning-export
+```
 
 ## Trust and Safety
 

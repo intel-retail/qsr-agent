@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -8,9 +9,23 @@ from typing import Any
 import yaml
 
 from .event_agent import Capability, CapabilityCatalog, Skill, StaleContextError
-from .learning import read_skill_meta
+from .learning import parse_frontmatter, read_skill_meta
 
 ACCURACY_CONTEXT = "get_order_accuracy_context"
+WEATHER_READ = "weather.get_weather_details"
+# Skills for the services with built-in clients above: (name, description, required tools, optional tools).
+# A skill is registered once all its required tools are. Skills for discovered services are declared in
+# their own SKILL.md frontmatter instead (see register_declared_skills); nothing service-specific is added here.
+BUILTIN_SKILLS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = (
+    ("event-menu-decisions", "Weather and queue events: decide whether menu availability should change",
+     ("kiosk.get_kiosk_context", "kiosk.change_menu_items"), (WEATHER_READ,)),
+    ("kiosk-operations", "Restaurant operations, menu, queue, wait, staffing and ordering activity",
+     ("kiosk.get_kiosk_context", "kiosk.change_menu_items"), ()),
+    ("order-accuracy", "Order mismatches, accuracy alerts, station issues and remake recommendations",
+     ("accuracy.get_order_accuracy_context", "accuracy.request_remake"), ()),
+)
+# Parsed `metadata.qsr` declarations by SKILL.md path, keyed on the file's mtime.
+_DECLARED_SKILLS: dict[Path, tuple[float, dict[str, Any] | None]] = {}
 
 
 class MergedAccuracyClient:
@@ -142,43 +157,120 @@ def _fresh(context: dict[str, Any]) -> None:
 
 
 def register_defaults(
-    catalog: CapabilityCatalog, root: Path, kiosk: Any, accuracy: Any, weather: Any | None = None
+    catalog: CapabilityCatalog, root: Path, kiosk: Any | None, accuracy: Any | None, weather: Any | None = None
 ) -> None:
-    catalog.register_tool(Capability(
-        "kiosk.get_kiosk_context", "Read current menu, queue, wait, staffing and demand",
-        kiosk, "get_kiosk_context", True,
-    ))
-    catalog.register_tool(Capability(
-        "kiosk.change_menu_items", "Propose up to three menu availability changes; no prices",
-        kiosk, "change_menu_items", False, ("kiosk.get_kiosk_context",), validate_menu,
-    ))
-    catalog.register_tool(Capability(
-        "kiosk.update_kiosk_settings",
-        "Propose kiosk operating settings: express/standard mode, active kiosks, upsell prompts",
-        kiosk, "update_kiosk_settings", False, ("kiosk.get_kiosk_context",), validate_kiosk_settings,
-    ))
-    catalog.register_tool(Capability(
-        "accuracy.get_order_accuracy_context", "Read accuracy, flagged orders, mismatches and stations",
-        accuracy, "get_order_accuracy_context", True,
-    ))
-    catalog.register_tool(Capability(
-        "accuracy.request_remake", "Propose remaking an exact flagged order",
-        accuracy, "request_remake", False, ("accuracy.get_order_accuracy_context",), validate_remake,
-    ))
-    weather_reads: tuple[str, ...] = ()
+    """Built-in capabilities of the configured services; a skill is registered only when all its tools are."""
+    if kiosk is not None:
+        catalog.register_tool(Capability(
+            "kiosk.get_kiosk_context", "Read current menu, queue, wait, staffing and demand",
+            kiosk, "get_kiosk_context", True,
+        ))
+        catalog.register_tool(Capability(
+            "kiosk.change_menu_items", "Propose up to three menu availability changes; no prices",
+            kiosk, "change_menu_items", False, ("kiosk.get_kiosk_context",), validate_menu,
+        ))
+        catalog.register_tool(Capability(
+            "kiosk.update_kiosk_settings",
+            "Propose kiosk operating settings: express/standard mode, active kiosks, upsell prompts",
+            kiosk, "update_kiosk_settings", False, ("kiosk.get_kiosk_context",), validate_kiosk_settings,
+        ))
+    if accuracy is not None:
+        catalog.register_tool(Capability(
+            "accuracy.get_order_accuracy_context", "Read accuracy, flagged orders, mismatches and stations",
+            accuracy, "get_order_accuracy_context", True,
+        ))
+        catalog.register_tool(Capability(
+            "accuracy.request_remake", "Propose remaking an exact flagged order",
+            accuracy, "request_remake", False, ("accuracy.get_order_accuracy_context",), validate_remake,
+        ))
     if weather is not None:
         catalog.register_tool(Capability(
-            "weather.get_weather_details",
+            WEATHER_READ,
             "Read current store-location weather: condition, is_raining, temperature_c, precipitation",
             weather, "get_weather_details", True, store_scoped=False,
         ))
-        weather_reads = ("weather.get_weather_details",)
-    for name, description, tools in (
-        ("event-menu-decisions", "Weather and queue events: decide whether menu availability should change",
-         ("kiosk.get_kiosk_context", "kiosk.change_menu_items", *weather_reads)),
-        ("kiosk-operations", "Restaurant operations, menu, queue, wait, staffing and ordering activity",
-         ("kiosk.get_kiosk_context", "kiosk.change_menu_items")),
-        ("order-accuracy", "Order mismatches, accuracy alerts, station issues and remake recommendations",
-         ("accuracy.get_order_accuracy_context", "accuracy.request_remake")),
+    register_skills(catalog, root)
+
+
+def register_skills(catalog: CapabilityCatalog, root: Path, disabled: Iterable[str] = ()) -> None:
+    """Register the built-in and declared skills whose tools are all in the catalog (idempotent)."""
+    skip = set(disabled)
+    for name, description, required, optional in BUILTIN_SKILLS:
+        if name in catalog.skills or name in skip or not all(tool in catalog.tools for tool in required):
+            continue
+        tools = (*required, *(tool for tool in optional if tool in catalog.tools))
+        _register(catalog, name, description, root / "qsr-skills" / name / "SKILL.md", tools)
+    register_declared_skills(catalog, root / "qsr-skills", skip)
+
+
+def register_declared_skills(catalog: CapabilityCatalog, skills_dir: Path, disabled: Iterable[str] = ()) -> None:
+    """Register skills that declare themselves for the event agent in `metadata.qsr` of their SKILL.md.
+
+    A service's skill may only grant that service's own tools (`service` + unprefixed `tools`), and is
+    offered for its `event_types` only (empty = any event). Registered once the service is discovered.
+    """
+    skip = set(disabled)
+    for path in sorted(skills_dir.glob("*/SKILL.md")):
+        meta = _declared_meta(path)
+        if meta is None or meta["name"] in catalog.skills or meta["name"] in skip:
+            continue
+        tools = tuple(f"{meta['service']}.{tool}" for tool in meta["tools"])
+        if all(tool in catalog.tools for tool in tools):
+            _register(catalog, meta["name"], meta["description"], path, tools, tuple(meta["event_types"]),
+                      tuple((field, tuple(values)) for field, values in meta["action_when"].items()))
+
+
+def _declared_meta(path: Path) -> dict[str, Any] | None:
+    """Validated `metadata.qsr` of a service skill, or None when the skill is chat-only or invalid."""
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return None
+    cached = _DECLARED_SKILLS.get(path)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    meta = None
+    try:
+        front = parse_frontmatter(path.read_text(encoding="utf-8"))
+        qsr = (front.get("metadata") or {}).get("qsr")
+        if isinstance(qsr, dict):
+            meta = _validate_declaration(front, qsr, path.parent.name)
+    except (OSError, ValueError, yaml.YAMLError) as error:
+        print(f"[autonomy] skipped skill declaration {path.parent.name}: {error}", file=sys.stderr)
+    _DECLARED_SKILLS[path] = (mtime, meta)
+    return meta
+
+
+def _validate_declaration(front: dict[str, Any], qsr: dict[str, Any], directory: str) -> dict[str, Any]:
+    name, description = front.get("name"), front.get("description")
+    if name != directory:
+        raise ValueError("skill name must match its directory")
+    if not isinstance(description, str) or not description.strip():
+        raise ValueError("description is required")
+    service, tools, event_types = qsr.get("service"), qsr.get("tools"), qsr.get("event_types", [])
+    if not isinstance(service, str) or not service or "." in service:
+        raise ValueError("metadata.qsr.service must be the skill's own service name")
+    if not isinstance(tools, list) or not tools or not all(isinstance(tool, str) and tool for tool in tools):
+        raise ValueError("metadata.qsr.tools must be a non-empty list of tool names")
+    if any("." in tool for tool in tools):
+        raise ValueError("metadata.qsr.tools may only name the skill's own service tools (no '<service>.' prefix)")
+    if not isinstance(event_types, list) or not all(isinstance(kind, str) and kind for kind in event_types):
+        raise ValueError("metadata.qsr.event_types must be a list of event type names")
+    action_when = qsr.get("action_when", {})
+    if not isinstance(action_when, dict) or not all(
+        isinstance(field, str) and field and isinstance(values, list) and values
+        and all(isinstance(value, str) and value for value in values)
+        for field, values in action_when.items()
     ):
-        catalog.register_skill(Skill(name, description, root / "qsr-skills" / name / "SKILL.md", tools))
+        raise ValueError("metadata.qsr.action_when must map event data fields to non-empty lists of accepted values")
+    return {"name": name, "description": description.strip(), "service": service, "tools": tools,
+            "event_types": event_types, "action_when": action_when}
+
+
+def _register(catalog: CapabilityCatalog, name: str, description: str, path: Path, tools: tuple[str, ...],
+              event_types: tuple[str, ...] = (),
+              action_when: tuple[tuple[str, tuple[str, ...]], ...] = ()) -> None:
+    # The catalog requires an action's context reads to be part of the skill.
+    tools += tuple(dict.fromkeys(read for tool in tools for read in catalog.tools[tool].required_reads
+                                 if read not in tools))
+    catalog.register_skill(Skill(name, description, path, tools, event_types=event_types, action_when=action_when))

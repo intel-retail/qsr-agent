@@ -1,7 +1,7 @@
 # Remote / external MCP services registered with Hermes.
-# setup.sh merges this file, so add real remote endpoints here. Local simulation
-# services are auto-discovered from tests/mcp-services/*_server.py and must NOT
-# be listed here. Put TLS/authentication at a reverse proxy on each service host.
+# setup.sh merges this file, so add real remote endpoints here. A service whose
+# URL is empty is not registered. Put TLS/authentication at a reverse proxy on
+# each service host.
 
 mcp_servers:
   # Suspicious Activity (kitchen food safety). SAD runs its own MCP service via
@@ -35,8 +35,8 @@ mcp_servers:
     connect_timeout: 15
     timeout: 120
 
-  # Kiosk operations (queue, menu, staffing). Named `kiosk` so it replaces the
-  # local simulation (tests/mcp-services/kiosk_server.py) when a URL is set.
+  # Kiosk operations (smart-kiosk-assistant: queue, menu, kiosk settings).
+  # The name `kiosk` is the agent's built-in kiosk capability.
   kiosk:
     url: ${QSR_KIOSK_MCP_URL}
     transport: streamable-http
@@ -61,41 +61,46 @@ mcp_servers:
   # docs/user-guide/how-to-guides/use-mcp-agent-tools.md). nginx's cert is
   # self-signed by default (nginx-cert-gen.sh); entrypoint.py's
   # trust_remote_mcp_certs() fetches and trusts it automatically at startup, so
-  # no manual cert setup is needed for the default same-host deployment below.
+  # no manual cert setup is needed.
+  # Same-host deployment: set
+  # QSR_DIGITAL_SIGNAGE_MCP_URL=https://host.docker.internal:5000/mcp.
   # Cross-machine deployment: set QSR_DIGITAL_SIGNAGE_MCP_URL to the real host
   # (host.docker.internal only resolves to THIS container's own host) - the
   # digital-signage box's own HOST_IP must also be set to its real reachable IP
   # so its cert's SAN list actually covers that address.
   digital-signage:
-    url: ${QSR_DIGITAL_SIGNAGE_MCP_URL:-https://host.docker.internal:5000/mcp}
+    url: ${QSR_DIGITAL_SIGNAGE_MCP_URL}
     transport: streamable-http
     enabled: true
     connect_timeout: 15
     timeout: 120
 
   # EdgeMart café-day sim (customers, orders, tables, queue) from the
-  # qsr-store-pos-agent repo's `sim-service-mcp` compose service
-  # (streamable-http on :3101). See that repo's backend/src/sim-service/SIM-SERVICE.md.
-  edgemart-sim-service:
-    url: ${EDGEMART_SIM_MCP_URL:-http://host.docker.internal:3101/mcp}
+  # qsr-store-pos-agent repo's `store-activity-service-mcp` compose service
+  # (streamable-http on :3101). See that repo's backend/src/store-activity-service/STORE-ACTIVITY-SERVICE.md.
+  # Same host: EDGEMART_SIM_MCP_URL=http://host.docker.internal:3101/mcp.
+  store-activity-service:
+    url: ${EDGEMART_SIM_MCP_URL}
     transport: streamable-http
     enabled: true
     connect_timeout: 15
     timeout: 60
 
-  # EdgeMart table occupancy & cleaning sim, same repo's `table-sim-service-mcp`
+  # EdgeMart table occupancy & cleaning sim, same repo's `table-occupancy-service-mcp`
   # compose service (streamable-http on :3201).
-  edgemart-table-sim-service:
-    url: ${EDGEMART_TABLE_SIM_MCP_URL:-http://host.docker.internal:3201/mcp}
+  # Same host: EDGEMART_TABLE_SIM_MCP_URL=http://host.docker.internal:3201/mcp.
+  table-occupancy-service:
+    url: ${EDGEMART_TABLE_SIM_MCP_URL}
     transport: streamable-http
     enabled: true
     connect_timeout: 15
     timeout: 60
 
   # EdgeMart footfall/movement sim (read-only), same repo's
-  # `footfall-sim-service-mcp` compose service (streamable-http on :3301).
-  edgemart-footfall-sim-service:
-    url: ${EDGEMART_FOOTFALL_SIM_MCP_URL:-http://host.docker.internal:3301/mcp}
+  # `footfall-service-mcp` compose service (streamable-http on :3301).
+  # Same host: EDGEMART_FOOTFALL_SIM_MCP_URL=http://host.docker.internal:3301/mcp.
+  footfall-service:
+    url: ${EDGEMART_FOOTFALL_SIM_MCP_URL}
     transport: streamable-http
     enabled: true
     connect_timeout: 15

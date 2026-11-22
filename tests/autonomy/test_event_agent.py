@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import importlib.util
+import os
 import sys
 import tempfile
 import threading
@@ -19,9 +20,30 @@ from autonomy.hermes_gateway import GatewayError
 from autonomy.event_agent import Capability, CapabilityCatalog, HermesEventAgent, Skill, StaleContextError, parse_event_response
 from autonomy.mcp import HttpMcpClient, StdioMcpClient
 from autonomy.registry import AutonomyRegistry
-from autonomy.service_capabilities import register_defaults, validate_menu, validate_remake
+from autonomy.service_capabilities import (
+    register_declared_skills, register_defaults, register_skills, validate_menu, validate_remake,
+)
 from autonomy.store import ProposalStore
 from autonomy.worker import build_controller
+
+# Minimal stdio MCP server (stdlib only): `echo` returns its arguments, `fail` reports a tool error.
+STDIO_ECHO_SERVER = """
+import json, sys
+for line in sys.stdin:
+    message = json.loads(line)
+    if "id" not in message:
+        continue
+    method, params = message["method"], message.get("params") or {}
+    if method == "tools/list":
+        result = {"tools": [{"name": "echo"}]}
+    elif method == "tools/call" and params["name"] == "fail":
+        result = {"isError": True, "content": [{"type": "text", "text": "bad input"}]}
+    elif method == "tools/call":
+        result = {"structuredContent": params.get("arguments") or {}}
+    else:
+        result = {}
+    print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}), flush=True)
+"""
 
 
 class FakeService:
@@ -268,6 +290,168 @@ class EventAgentTests(unittest.TestCase):
         self.assertTrue(result["executed"])
         self.assertEqual(self.service.calls[-1][0], "remake")
 
+    def test_signage_skill_registers_once_signage_tools_are_discovered(self):
+        service = FakeService()
+        catalog = CapabilityCatalog()
+        register_skills(catalog, Path.cwd())
+        self.assertNotIn("digital-signage", catalog.skills)
+        for name in ("describe", "get_current_ad", "get_catalog"):
+            catalog.register_tool(Capability(f"digital-signage.{name}", name, service, name, True))
+        catalog.register_tool(Capability(
+            "digital-signage.select_dynamic_ad", "Select ad", service, "select_dynamic_ad", False,
+            ("digital-signage.get_current_ad", "digital-signage.get_catalog"), lambda arguments, observations: None,
+        ))
+        register_skills(catalog, Path.cwd())
+        register_skills(catalog, Path.cwd())
+        catalog.validate()
+        self.assertEqual(catalog.skills["digital-signage"].tools, (
+            "digital-signage.describe", "digital-signage.get_current_ad", "digital-signage.get_catalog",
+            "digital-signage.select_dynamic_ad"))
+        # Declared by the skill's own frontmatter, not by core code.
+        self.assertEqual(catalog.skills["digital-signage"].event_types, ("zone.density_changed",))
+        catalog.remove_skill("digital-signage")
+        register_skills(catalog, Path.cwd(), ["digital-signage"])
+        self.assertNotIn("digital-signage", catalog.skills)
+
+    def test_declared_skills_grant_only_their_own_service_tools(self):
+        service = FakeService()
+        catalog = CapabilityCatalog()
+        catalog.register_tool(Capability("signage.get_state", "state", service, "get_state", True, store_scoped=False))
+        catalog.register_tool(Capability("other.get_thing", "thing", service, "get_thing", True, store_scoped=False))
+        catalog.register_tool(Capability("signage.set_state", "set", service, "set_state", False,
+                                         ("signage.get_state",), lambda arguments, observations: None, store_scoped=False))
+        with tempfile.TemporaryDirectory() as root:
+            skills = Path(root)
+
+            def write(name, qsr=None):
+                (skills / name).mkdir()
+                block = f"metadata:\n  qsr:\n{qsr}" if qsr else ""
+                (skills / name / "SKILL.md").write_text(
+                    f"---\nname: {name}\ndescription: {name} skill\n{block}---\n# {name}\n", encoding="utf-8")
+
+            write("chat-only")
+            write("signage", "    service: signage\n    event_types: [zone.busy]\n    tools: [get_state, set_state]\n")
+            write("greedy", "    service: signage\n    tools: [get_state, other.get_thing]\n")
+            write("foreign", "    service: other\n    tools: [set_state]\n")
+            with patch("sys.stderr"):
+                register_declared_skills(catalog, skills)
+            self.assertEqual(set(catalog.skills), {"signage"})
+            self.assertEqual(catalog.skills["signage"].event_types, ("zone.busy",))
+            self.assertEqual(catalog.skills["signage"].tools, ("signage.get_state", "signage.set_state"))
+            catalog.validate()
+            # An edited declaration is re-read (mtime changes); an unchanged one is not re-parsed.
+            path = skills / "signage" / "SKILL.md"
+            catalog.remove_skill("signage")
+            path.write_text(path.read_text(encoding="utf-8").replace("zone.busy", "zone.quiet"), encoding="utf-8")
+            os.utime(path, (time.time() + 5, time.time() + 5))
+            register_declared_skills(catalog, skills)
+            self.assertEqual(catalog.skills["signage"].event_types, ("zone.quiet",))
+            catalog.remove_skill("signage")
+            with patch("autonomy.service_capabilities.parse_frontmatter", side_effect=AssertionError("re-parsed")):
+                register_declared_skills(catalog, skills)
+            self.assertIn("signage", catalog.skills)
+
+    def test_high_density_event_proposes_the_high_demand_ad(self):
+        read = {"skills": ["digital-signage"], "reads": [
+            {"tool": "digital-signage.get_current_ad", "arguments": {}},
+            {"tool": "digital-signage.get_catalog", "arguments": {}}]}
+        decision = {"summary": "counter is high (11 of 12)", "action": {
+            "tool": "digital-signage.select_dynamic_ad", "arguments": {"demand": "high", "display_seconds": 30}}}
+        runner = ScriptedHermes(read, decision)
+        event = {"event_id": "zone-1", "event_type": "zone.density_changed",
+                 "data": {"ref": "counter", "density": "high", "count": 11, "capacity": 12}}
+        evaluation = HermesEventAgent(runner, self._signage_catalog()).evaluate_event(event, False)
+        self.assertEqual(evaluation.proposal.tool, "digital-signage.select_dynamic_ad")
+        self.assertEqual(evaluation.proposal.arguments, {"demand": "high", "display_seconds": 30})
+        self.assertIn("## Events", runner.prompts[1])
+
+    def test_non_high_density_event_reaches_the_model_and_ends_without_action(self):
+        runner = ScriptedHermes({"skills": ["digital-signage"], "reads": [
+            {"tool": "digital-signage.get_current_ad", "arguments": {}},
+            {"tool": "digital-signage.get_catalog", "arguments": {}}]},
+            {"summary": "No action", "action": None})
+        event = {"event_id": "zone-1", "event_type": "zone.density_changed",
+                 "data": {"ref": "counter", "density": "medium", "count": 6, "capacity": 12}}
+        evaluation = HermesEventAgent(runner, self._signage_catalog()).evaluate_event(event, False)
+        self.assertFalse(evaluation.active)
+        self.assertEqual(len(runner.prompts), 2)
+
+    def test_medium_density_action_is_refused_by_the_declared_guard(self):
+        # The model misreads medium as high; the skill's action_when turns that into a visible no-action.
+        runner = ScriptedHermes({"skills": ["digital-signage"], "reads": [
+            {"tool": "digital-signage.get_current_ad", "arguments": {}},
+            {"tool": "digital-signage.get_catalog", "arguments": {}}]},
+            {"summary": "Density is high; propose dynamic ad", "action": {
+                "tool": "digital-signage.select_dynamic_ad", "arguments": {"demand": "high", "display_seconds": 30}}})
+        event = {"event_id": "zone-1", "event_type": "zone.density_changed",
+                 "data": {"ref": "counter", "density": "medium", "count": 7, "capacity": 12}}
+        evaluation = HermesEventAgent(runner, self._signage_catalog()).evaluate_event(event, False)
+        self.assertFalse(evaluation.active)
+        self.assertIsNone(evaluation.proposal)
+        self.assertEqual(
+            evaluation.decision["summary"],
+            "density is 'medium'; digital-signage allows select_dynamic_ad only when density is high; no action.")
+        self.assertEqual(evaluation.decision["model_summary"], "Density is high; propose dynamic ad")
+        self.assertEqual(evaluation.decision["guard"], "action_when")
+        self.assertEqual(len(runner.prompts), 2)
+
+    def test_signage_skill_is_not_offered_for_other_event_types(self):
+        runner = ScriptedHermes({"skills": ["digital-signage"], "reads": []},
+                                {"summary": "not a footfall event", "action": None})
+        event = {"event_id": "table-1", "event_type": "table.dirty", "data": {"ref": "table-4"}}
+        catalog = self._signage_catalog()
+        evaluation = HermesEventAgent(runner, catalog).evaluate_event(event, False)
+        self.assertFalse(evaluation.active)
+        self.assertEqual(runner.prompts, [])
+        self.assertEqual(evaluation.decision["decision_source"], "catalog")
+        self.assertIn("No registered skill covers table.dirty", evaluation.decision["summary"])
+        # A skill that applies to any event brings the model back in, but the signage skill stays hidden.
+        catalog.register_tool(Capability("kiosk.get_kiosk_context", "ctx", catalog.tools["digital-signage.describe"].client,
+                                         "describe", True, store_scoped=False))
+        catalog.register_skill(Skill("kiosk-operations", "Store operations",
+                                     Path.cwd() / "qsr-skills" / "kiosk-operations" / "SKILL.md",
+                                     ("kiosk.get_kiosk_context",)))
+        evaluation = HermesEventAgent(runner, catalog).evaluate_event(event, False)
+        self.assertFalse(evaluation.active)
+        self.assertNotIn('"name":"digital-signage"', runner.prompts[0])
+        self.assertIn("digital-signage does not apply to table.dirty events", runner.prompts[1])
+
+    def test_signage_skill_text_proposes_only_the_high_demand_ad_for_thirty_seconds(self):
+        text = (Path.cwd() / "qsr-skills" / "digital-signage" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("## Events", text)
+        for expected in ("zone.density_changed", "`high`", "30", "MUST propose `select_dynamic_ad`",
+                         "agent-commanded ad", '"demand": "high"', "product_detected", "ad_displayed"):
+            self.assertIn(expected, text)
+        self.assertNotIn("MUST propose `clear_ad`", text)
+
+    def _signage_catalog(self):
+        class SignageService:
+            def list_tools(self):
+                return [
+                    {"name": "describe", "inputSchema": {"type": "object"}},
+                    {"name": "get_current_ad", "inputSchema": {"type": "object"}},
+                    {"name": "get_catalog", "inputSchema": {"type": "object"}},
+                    {"name": "select_dynamic_ad", "inputSchema": {
+                        "type": "object",
+                        "properties": {"demand": {"type": "string"}, "display_seconds": {"type": "integer"}},
+                        "required": ["demand"], "additionalProperties": False}},
+                ]
+
+            def call_tool(self, name, arguments):
+                return {"result": "ok", "executed": True}
+
+        service = SignageService()
+        catalog = CapabilityCatalog()
+        for name in ("describe", "get_current_ad", "get_catalog"):
+            catalog.register_tool(Capability(f"digital-signage.{name}", name, service, name, True, store_scoped=False))
+        catalog.register_tool(Capability(
+            "digital-signage.select_dynamic_ad", "Select ad", service, "select_dynamic_ad", False,
+            ("digital-signage.get_current_ad", "digital-signage.get_catalog"),
+            lambda arguments, observations: None, store_scoped=False,
+        ))
+        register_skills(catalog, Path.cwd())
+        return catalog
+
     def test_skill_prefixed_tool_names_resolve_to_registered_capabilities(self):
         prefixed_read = {"skills": ["accuracy"], "reads": [{"tool": "accuracy.accuracy.context", "arguments": {}}]}
         prefixed_action = {"summary": "Remake", "action": {
@@ -291,12 +475,32 @@ class EventAgentTests(unittest.TestCase):
     def test_stale_context_is_refreshed_and_model_reassesses(self):
         runner = ScriptedHermes(self.read, self.action,
                                 {"summary": "Issue resolved in fresh context", "action": None})
-        with patch.object(self.catalog, "validate_action", side_effect=StaleContextError("expired")):
+        with patch.object(self.catalog, "validate_action", side_effect=[StaleContextError("expired"), None]):
             result = HermesEventAgent(runner, self.catalog).evaluate_event(self.event, False)
         self.assertIsNone(result.proposal)
         self.assertEqual(self.service.calls, [("context", {}), ("context", {})])
         self.assertIn("snapshots have been refreshed", runner.prompts[2])
         self.assertEqual(len(result.decision["reads"]), 2)
+
+    def test_missing_required_context_is_read_and_model_reassesses(self):
+        self.catalog.register_tool(Capability("weather.details", "Read weather", self.service, "context", True,
+                                              store_scoped=False))
+        self.catalog.register_skill(Skill("menu", "Weather menu", Path("qsr-skills/order-accuracy/SKILL.md"),
+                                          ("weather.details", "accuracy.context", "accuracy.remake")))
+        runner = ScriptedHermes({"skills": ["menu"], "reads": [{"tool": "weather.details", "arguments": {}}]},
+                                self.action, self.action)
+        evaluation = HermesEventAgent(runner, self.catalog).evaluate_event(self.event, False)
+        self.assertEqual(evaluation.proposal.tool, "accuracy.remake")
+        self.assertIn("needs live context that had not been read: accuracy.context", runner.prompts[2])
+        self.assertEqual([read["tool"] for read in evaluation.decision["reads"]],
+                         ["weather.details", "accuracy.context"])
+
+    def test_snapshot_stale_on_arrival_reports_clock_skew(self):
+        runner = ScriptedHermes(self.read, self.action, self.action)
+        with patch.object(self.catalog, "validate_action", side_effect=StaleContextError("expired")):
+            with self.assertRaisesRegex(RuntimeError, "clock is probably behind"):
+                HermesEventAgent(runner, self.catalog, max_rounds=3).evaluate_event(self.event, False)
+        self.assertEqual(self.service.calls, [("context", {}), ("context", {})])
 
     def test_persistently_stale_context_still_fails_closed(self):
         runner = ScriptedHermes(self.read, self.action, self.action)
@@ -396,6 +600,8 @@ class EventAgentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary, patch.dict("os.environ", {
             "QSR_AUTONOMY_DB": str(Path(temporary) / "state.db"),
             "QSR_AUTONOMY_MODULES": "",
+            "QSR_KIOSK_MCP_URL": "http://127.0.0.1:9/mcp",
+            "QSR_ORDER_ACCURACY_TAKE_AWAY_MCP_URL": "http://127.0.0.1:9/mcp",
             "QSR_AUTONOMY_DISABLED_TOOLS": "accuracy.get_order_accuracy_context",
             "QSR_AUTONOMY_DISABLED_SKILLS": "event-menu-decisions",
         }):
@@ -474,6 +680,25 @@ class EventAgentTests(unittest.TestCase):
             reopened = ProposalStore(Path(temporary) / "state.db")
             self.assertEqual(len(reopened.decisions()), 3)
             reopened.close()
+
+    def test_repeated_proposal_refreshes_pending_evidence_so_approval_is_not_expired(self):
+        runner = ScriptedHermes(self.read, self.action, self.read, {**self.action, "summary": "Still flagged"})
+        with tempfile.TemporaryDirectory() as temporary:
+            store = ProposalStore(Path(temporary) / "state.db")
+            registry = AutonomyRegistry()
+            registry.register_event(HermesEventAgent(runner, self.catalog))
+            controller = registry.build(store)
+            first = controller.receive_event(self.event)["proposal"]
+            with store._connection:
+                store._connection.execute(
+                    "UPDATE proposals SET evidence_json = ? WHERE id = ?",
+                    (json.dumps({**first["evidence"], "evaluated_at": time.time() - 3600}), first["id"]))
+            again = controller.receive_event({**self.event, "event_id": "test-2"})["proposal"]
+            self.assertEqual(again["id"], first["id"])
+            self.assertEqual(again["summary"], "Still flagged")
+            self.assertEqual(controller.status()["pending"], 1)
+            self.assertEqual(controller.approve(first["id"])["status"], "executed")
+            store.close()
 
     def test_failed_event_can_retry_and_error_is_visible(self):
         runner = ScriptedHermes({"bad": "response"}, {"summary": "No action", "action": None})
@@ -582,22 +807,23 @@ class EventAgentTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "unavailable"):
             HttpMcpClient("http://127.0.0.1:9/mcp", timeout=1).list_tools()
 
-    def test_stdio_mcp_client_reads_and_acts_on_fastmcp_service(self):
-        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {
-            "MCP_LOG_DIR": directory, "QSR_KIOSK_STATE": str(Path(directory) / "kiosk.json"),
-        }):
-            client = StdioMcpClient(Path(sys.executable), Path("tests/mcp-services/kiosk_server.py"))
-            self.assertEqual(client.call_tool("get_kiosk_context")["restaurant"]["id"], "qsr-001")
-            result = client.call_tool("change_menu_items", {
-                "changes": [{"item_id": "tea", "available": True, "reason": "Rain"}], "reason": "test"})
-            self.assertEqual((result["executed"], result["gate"]), (True, "automatic"))
-            with self.assertRaisesRegex(RuntimeError, "between one and three"):
-                client.call_tool("change_menu_items", {"changes": [], "reason": "x"})
+    def test_stdio_mcp_client_reads_and_reports_tool_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            server = Path(directory) / "echo_server.py"
+            server.write_text(STDIO_ECHO_SERVER, encoding="utf-8")
+            client = StdioMcpClient(Path(sys.executable), server)
+            self.assertEqual(client.list_tools(), [{"name": "echo"}])
+            self.assertEqual(client.call_tool("echo", {"value": 3}), {"value": 3})
+            with self.assertRaisesRegex(RuntimeError, "MCP tool failed: fail: bad input"):
+                client.call_tool("fail")
 
     def test_stdio_mcp_client_times_out(self):
-        client = StdioMcpClient(Path(sys.executable), Path("tests/mcp-services/kiosk_server.py"), timeout=0.01)
-        with self.assertRaisesRegex(RuntimeError, "timed out"):
-            client.call_tool("get_kiosk_context")
+        with tempfile.TemporaryDirectory() as directory:
+            server = Path(directory) / "silent_server.py"
+            server.write_text("import time\ntime.sleep(5)\n", encoding="utf-8")
+            client = StdioMcpClient(Path(sys.executable), server, timeout=0.2)
+            with self.assertRaisesRegex(RuntimeError, "timed out"):
+                client.call_tool("echo")
 
 
 class InputGuardrailTests(unittest.TestCase):

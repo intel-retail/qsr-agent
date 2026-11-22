@@ -20,6 +20,150 @@ journal all work against the real service code.
 Every action the agent proposes runs only after an operator approves it. Each service
 also validates the action itself.
 
+## Fresh Run on Latest Main (`261fc0b`)
+
+New clone of `intel-retail/qsr-agent` `main`, with no existing images, volumes or
+models: `make download-models` (16 GB), `docker compose build --no-cache`,
+`make up REGISTRY=false`. All remote services ran on their own hosts; only weather
+ran next to the agent.
+
+| Service | Endpoint | Tools | Result |
+|---|---|---|---|
+| Kiosk | `<kiosk-host>:8014` | 13 | Q&A and settings actions pass |
+| Order Accuracy take-away / dine-in | `<order-accuracy-host>:8010` / `:8011` | 6 / 6 | Q&A pass; host went offline mid-run, MCP did not answer after it returned |
+| Digital signage | `https://<signage-host>:5000` (self-signed) | 7 | Q&A pass |
+| Suspicious activity | `<sad-host>:9000` | 9 | Q&A pass |
+| Store activity / table occupancy / footfall | `<edgemart-host>:3101` / `:3201` / `:3301` | 8 / 7 / 4 | Q&A pass after skill fixes |
+| Weather (local) | compose `weather` | 2 | Q&A and events pass |
+
+Results:
+
+- **Unit tests:** agent, operator UI and weather (18) pass after fixing a stale test.
+- **Weather events:** rain → `DRINK-004`/`DRINK-005` turned off on the remote kiosk
+  (approved, executed); clear → turned back on; 32 °C → no action.
+- **Sample-data learning** (operator guide): kiosk 7 rules, weather 3, accuracy 1.
+  Approved after a container recreate; the learned skills are installed.
+
+Issues found and fixed:
+
+| Issue | Fix |
+|---|---|
+| No-cache build failed: proxy node intercepted the `uv` download (curl 60) | Documented in Build from Source and Troubleshooting |
+| `test_discovery` used the pre-rename EdgeMart server names | Test updated; `compare_*`/`tail_*` tools classified as reads |
+| Chat "back to normal" called `set_board_mode` and mixed board mode with kiosk mode | Chat loads the domain skill first; kiosk skill restores `baseline_settings` with `update_kiosk_settings` |
+| "Flagged in the last 30 minutes" listed weeks-old orders | Order accuracy skill filters by `observed_at` |
+| Learning fitted rules from two coincidental records | At least three records needed for an extra rule |
+| `make learn` could not read signage (self-signed certificate) | Learn CLI uses the agent's remote CA bundle |
+| Approving a staged rule after `make restart` failed ("unknown pending skill write") | Staged writes kept in the `learning` volume |
+| Dirty-table count reported as tables; busy-hours passed invalid dates | Table and footfall skills corrected |
+| A large table answer exhausted the model context and chat hung | `make restart` recovers; documented in Troubleshooting |
+
+Not covered in this run: live kiosk queue events and live order-accuracy events with
+learning from real records, because the Order Accuracy MCP services stopped
+answering, and the kiosk queue source was fixed at one value. The earlier
+[Remote-Host Run](#remote-host-run-2026-11-03) covers both.
+
+## Remote-Host Run (2026-11-03)
+
+Fresh clone of `main` (`2212338`), started per the README with
+`make up REGISTRY=false`, remote URLs and `QSR_EXTRA_NO_PROXY` in `.env.example`.
+Only weather ran next to the agent.
+
+| Service | Endpoint | Version |
+|---|---|---|
+| Kiosk | `http://<kiosk-host>:8014/mcp` | voice-enabled-interactions `511586e`, 13 tools |
+| Take-away | `http://<order-accuracy-host>:8010/mcp` | order-accuracy `1a65b873`, 6 tools |
+| Dine-in | `http://<order-accuracy-host>:8011/mcp` | order-accuracy `1a65b873`, 6 tools |
+
+### Chat (Live)
+
+| Question | Result |
+|---|---|
+| Kiosk queue and wait; board mode, active kiosks, upsell | Correct, matches `get_kiosk_context` |
+| Take-away and dine-in rework rate; accuracy rate per venue | Correct |
+| Weather | Correct |
+| Recent failed orders | Partly wrong: once listed an `accurate` order as failed; once said every flagged order missed garlic naan (take-away ones missed fries) |
+
+### Events and Actions (Live)
+
+| Event (sent by the remote service) | Decision | Result on the remote |
+|---|---|---|
+| Take-away `order_mismatch_detected`, 1 missing item | `request_remake` proposed | Approved, `remake-03ea36cf82ce` on :8010 |
+| Dine-in `order_mismatch_detected` | `request_remake` proposed | Approved, `remake-21e8c1973a7c` on :8011 |
+| Kiosk queue 14, live queue 0 (injected) | No action: event and live queue disagree | Correct |
+| Kiosk queue 3 (kiosk-core poll) | `active_kiosks=4` proposed | Wrong, rejected with a reason |
+| Kiosk queue 14, previous 3 (kiosk-core poll) | Learned: express, 4 kiosks, upsell off | Approved, applied on the kiosk |
+| Weather rain 12 °C | Learned: `DRINK-004`, `DRINK-005` off | Approved, applied on the kiosk |
+| Weather clear 20 °C after rain | Learned: both back on | Approved, applied on the kiosk |
+| Weather 32 °C, soft serve already on | No action | Correct |
+
+### Learning From Real Remote Events (Live)
+
+A test operator answered 14 take-away and dine-in events with a policy that
+contradicts the sample history: remake every dine-in order, remake take-away
+only with two or more missing items, otherwise reject ("hand it over at the
+counter"). The journal recorded 21 live accuracy, 4 kiosk and 3 weather
+records. One learning run (20 s) on the 19 unlearnt accuracy records produced:
+
+| Learned rule | Taught | Matching | Rejected |
+|---|---|---|---|
+| `event.venue == "dine-in"` → `request_remake`, order ID from the event | 9 | 9 | 0 |
+| `event.reason == "missing:2"` → `request_remake`, order ID from the event | 3 | 3 | 0 |
+
+The six rejected single-item take-away orders match neither rule.
+
+### Issues Found and Fixed in This Run
+
+| Issue | Fix |
+|---|---|
+| Order Accuracy host clock 121 s behind: every decision for its events failed after 5 rounds | NTP on all hosts (docs); a snapshot that is stale when read now fails at once with a clock-skew message |
+| `make learn ARGS=run` failed on a fresh install (no learner profile) | `learn.py run` creates the profile, like **Learn now** |
+| Sample history used `shake`/`tea`/`hot-chocolate` and `confidence`/`issue_type`; learned rules proposed items the real kiosk lacks | Sample history uses the real kiosk menu IDs and Order Accuracy event fields; local kiosk simulation has the same items |
+| Learned weather skill could not read the weather service | A learned skill lists its own service's reads and every context its rules check |
+| Learner summary showed 10 fields alphabetically, so `event.venue` was cut and order IDs shown | Event fields first, per-record IDs skipped, lists expose `.count` |
+| Model rules copied without `event` were all dropped | One event type: `event` is filled in |
+| Smaller consistent pattern (3 records) and categorical fields were not learned | Sequential rule fitting on uncovered records, preferring labels every record has (`venue`) |
+
+### Remote Services Only (follow-up)
+
+The built-in kiosk and order-accuracy simulations (`tests/mcp-services`) and
+`make queue` were removed. Without remote URLs the kiosk and accuracy tools and
+skills are not registered; the image contains no local substitute. Re-checked
+live after the change:
+
+| Check | Result |
+|---|---|
+| Hermes MCP servers | Only the remote kiosk, take-away and dine-in URLs, weather and the optional EdgeMart/signage entries |
+| Event catalog | `kiosk.*` and `accuracy.*` tools come from the remote services |
+| 11 chat questions (queue, queue history, order stats, board state, menu requests, settings, menu price, flagged orders per venue, rework rate vs yesterday, dine-in station totals, weather) | All match direct calls to the remotes |
+| Weather rain → clear | Learned proposals executed on the remote kiosk; menu restored |
+| Fix found | The model proposed a menu change without reading the kiosk context and failed after 5 rounds; the agent now reads the required context itself and the model reassesses |
+
+The sample kiosk history now has the real kiosk event and context fields
+(`count`, `status` LOW ≤ 3 / MEDIUM ≤ 7 / HIGH, `people_nearby`, no
+`staff_on_duty`).
+
+### Digital Signage (remote, plug and play)
+
+`QSR_DIGITAL_SIGNAGE_MCP_URL=https://<signage-host>:5000/mcp` and its host in
+`QSR_EXTRA_NO_PROXY`. On start the agent trusted the service's self-signed
+certificate and discovered 7 tools without code changes.
+
+| Check | Result |
+|---|---|
+| Current ad, product catalog | Correct (camera-driven ad; 50 products) |
+| "Hot clear afternoon, high demand: pick and show an ad" | `select_dynamic_ad` showed `iced_coffee` |
+| "Clear the signage override" | `clear_ad`; display back to the camera-driven ad |
+| Discovery | `get_current_ad`, `get_catalog` are reads; ad tools are approval-gated actions that read both first. Fixed: `describe` was classed as an action; it is now a read and not required context |
+
+### Remaining Limits
+
+- A learned skill cannot forbid an action: with the sample-data skill, Hermes
+  also proposed a dine-in remake the rule did not cover.
+- Model quality: the kiosk queue-3 proposal and two chat answers above.
+- The agent journal drops a service snapshot over 4000 characters; the real
+  kiosk context is about 3500 with 26 menu items.
+
 ## Questions and Answers
 
 Status: **Live** = run against the running stack (real service code, real model);
@@ -59,7 +203,7 @@ not exercised in a test here.
 
 | Question or event | Status | Observed result |
 |---|---|---|
-| Plug-and-play: a new MCP service (table sim) with no agent code. "Mark table-4 as cleared." | Live | "Table-4 has been marked as cleared." Journaled as `edgemart-table-sim-service.mark_table_cleared {table_id: table-4}` |
+| Plug-and-play: a new MCP service (table sim) with no agent code. "Mark table-4 as cleared." | Live | "Table-4 has been marked as cleared." Journaled as `table-occupancy-service.mark_table_cleared {table_id: table-4}` |
 | A service reports an operator response itself (`POST /learning/responses`) | Live, Unit | 201 recorded; same `response_id` again adds nothing; a read tool or unknown tool returns 400 |
 | Weather (`weather_changed`) and learning across kiosk, weather, accuracy | Live (learner), Unit | Learner on Qwen3-30B: kiosk 7 rules in 61 s, weather 3 rules in 40 s, accuracy 1 rule in 26 s (remake with the order id taken from the event) |
 | Chat actions journaled from Hermes's own tool calls (no server logs needed) | Live, Unit | Recorded with the MCP server logs deleted |
@@ -77,7 +221,7 @@ the records, and an operator approves the resulting skill.
 |---|---|---|---|---|
 | Chat while the event is shown | `queue_count_changed` (queue 12, wait 9) | "Switch kiosks to express, open kiosk 4 and turn upsell off." | `instruction`, `kiosk.update_kiosk_settings` with the arguments Hermes used; captured from Hermes's stream with the MCP server logs deleted | Live |
 | Chat while the event is shown | `order_mismatch_detected` (take-away, remote) | "Remake order LIVE-11758, the fries were missing." | `instruction`, `accuracy.request_remake {order_id: LIVE-11758, ...}` | Live |
-| Chat while the event is shown | `table_dirty` (table sim, no agent code) | "Mark table-4 as cleared." | `instruction`, `edgemart-table-sim-service.mark_table_cleared {table_id: table-4}` | Live |
+| Chat while the event is shown | `table_dirty` (table sim, no agent code) | "Mark table-4 as cleared." | `instruction`, `table-occupancy-service.mark_table_cleared {table_id: table-4}` | Live |
 | Approve in the console | `queue_count_changed` (queue 14, remote kiosk) | Approved the `update_kiosk_settings` proposal | `approved`, with the proposal and its execution status | Live |
 | Silence | `queue_count_changed` | No response within the link window | `none` | Live |
 | Service reports it (`POST /learning/responses`) | `order_mismatch` (order A-77), `table_dirty` (table-4) | Remake / table cleared on the service's own screen | `service` link, 201; same `response_id` again adds nothing; a read or unknown tool returns 400 | Live, Unit |
@@ -201,5 +345,5 @@ the remote URLs for `kiosk`, `order-accuracy-take-away`, and `order-accuracy-din
 | order-accuracy | `take-away/src/core/agent_contract.py`, `dine-in/src/agent_contract.py` (new), `mcp_sensor.py` and `mcp_service.py` in both apps, both READMEs, both API references, tests |
 | smart-kiosk-assistant | `kiosk_core/qsr_mcp/agent_tools.py` (new), `kiosk_core/qsr_mcp/{mcp_service,autonomy,board_state}.py`, `kiosk_core/config.py`, `kiosk_core/ordering/service.py`, `docker-compose.yml`, `docs/qsr-mcp.md`, tests |
 
-See [Configuration](user-guide/get-started/configuration.md#run-kiosk-and-order-accuracy-on-remote-hosts)
+See [Configuration](user-guide/get-started/configuration.md#connect-store-services)
 for the deployment settings.
