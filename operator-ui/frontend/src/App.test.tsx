@@ -334,7 +334,7 @@ describe("App", () => {
     expect(asks()[1]).toEqual({ question: "thanks" });
   });
 
-  it("sends the operator's rejection reason, and cancelling the prompt keeps the proposal", async () => {
+  it("rejects immediately without asking for a reason", async () => {
     const { calls } = mockBackend({
       ...baseRoutes(),
       "/autonomy/status": () => json({ ...emptyAutonomy, pending: 1, proposals: [proposal()] }),
@@ -342,13 +342,9 @@ describe("App", () => {
     });
     renderApp();
     const user = userEvent.setup();
-    vi.mocked(window.prompt).mockReturnValueOnce(null);
     await user.click(await screen.findByRole("button", { name: /Reject: / }));
-    expect(calls.some((c) => c.url.endsWith("/reject"))).toBe(false);
-    vi.mocked(window.prompt).mockReturnValueOnce("  we go express instead  ");
-    await user.click(screen.getByRole("button", { name: /Reject: / }));
     await waitFor(() => expect(calls.some((c) => c.url.endsWith("/reject"))).toBe(true));
-    expect(calls.find((c) => c.url.endsWith("/reject"))?.init?.body).toBe(JSON.stringify({ reason: "we go express instead" }));
+    expect(calls.find((c) => c.url.endsWith("/reject"))?.init?.body).toBe("{}");
   });
 
   it("offers learning at the threshold, then reviews and approves the learned skill", async () => {
