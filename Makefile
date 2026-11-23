@@ -5,7 +5,7 @@ OVMS_PORT ?= 4444
 QSR_UI_PORT ?= 8600
 QSR_UI_HOST ?= 0.0.0.0
 # Image source: REGISTRY=true (default) pulls the pre-built image; REGISTRY=false builds from source.
-TAG ?= 2026.3.0-rc1
+TAG ?= 2026.3.0-rc2
 REGISTRY ?= true
 REGISTRY_URL ?= intel/
 QSR_IMAGE ?= $(REGISTRY_URL)qsr-agent:$(TAG)
