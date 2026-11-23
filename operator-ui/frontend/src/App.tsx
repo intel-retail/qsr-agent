@@ -18,8 +18,6 @@ import { useAutonomy } from "@/hooks/use-autonomy";
 import { useLearning } from "@/hooks/use-learning";
 import { useServices } from "@/hooks/use-services";
 
-const MAX_REASON_CHARS = 500;
-
 export default function App() {
   const services = useServices();
   const chat = useChat();
@@ -32,15 +30,8 @@ export default function App() {
     void autonomy.refresh();
     void learning.refresh();
   };
-  // A rejection reason is journaled with the event so the learner can learn from it.
   const decide = (id: string, decision: "approve" | "reject") => {
-    let reason = "";
-    if (decision === "reject") {
-      const answer = window.prompt("Why reject? (optional — Hermes learns from this)", "");
-      if (answer === null) return;
-      reason = answer.trim().slice(0, MAX_REASON_CHARS);
-    }
-    void autonomy.decide(id, decision, reason).then(() => learning.refresh());
+    void autonomy.decide(id, decision).then(() => learning.refresh());
   };
   const panel = (
     <ServicesPanel phase={services.phase} servers={services.servers} statuses={services.statuses} error={services.error} onRefresh={refreshAll} />
