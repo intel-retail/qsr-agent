@@ -14,7 +14,7 @@
 | Component | Requirement |
 | --- | --- |
 | Operating system | Linux x86-64 with Intel GPU drivers installed |
-| Docker | Docker Engine with the Compose v2 plugin, usable by the current user without `sudo` |
+| Docker | Docker Engine with the Compose v2 plugin (2.20 or newer), usable by the current user without `sudo` |
 | Tools | Git, `make`, `curl`, Python 3 (used by the model download script) |
 | Network | Access to GitHub, Docker Hub, and Hugging Face during installation |
 
@@ -46,9 +46,38 @@ sudo usermod -aG docker "$USER"
 | --- | --- | --- |
 | 8600 | Operator UI and event webhook | All interfaces (`0.0.0.0`) |
 | 4444 | OpenVINO™ Model Server API | Loopback only |
+| 4445 | Inference Router (host install with `scripts/setup.sh`) | Loopback only |
 | 8090 | Weather service | Loopback only |
 
 See how to change ports and bindings in [Configuration](./configuration.md).
+
+## Host Install (`scripts/setup.sh`)
+
+The host install runs the model server and the Inference Router in Docker and
+Hermes on the host, through
+[agent-harness-install](https://github.com/open-edge-platform/edge-ai-libraries/tree/main/frameworks/agent-harness-install).
+In addition to the requirements above:
+
+- Docker must already be installed and usable without `sudo`; `setup.sh`
+  stops otherwise and never installs Docker itself.
+- Node.js is installed into `~/.nvm` by the harness (no `sudo`) when the
+  host has none; it is used to build the operator UI. The nvm installer adds
+  lines to your shell profile (`~/.bashrc`), and the harness adds a PATH block
+  for `~/.local/bin`.
+- `python3-venv` must be installed, or passwordless `sudo` must be available
+  so the harness can install it. `setup.sh` runs unattended with standard
+  input closed, so a `sudo` password prompt cannot be answered.
+- Models are downloaded to `MODEL_ROOT` (default `./models`), the same
+  directory `make up` uses, so the two install paths share one copy.
+- `setup.sh` fails if the model server is not running on the Intel GPU
+  (`ALLOW_CPU_INFERENCE=1` accepts CPU inference for debugging only).
+
+`scripts/uninstall.sh` removes Hermes, the containers, the harness checkout
+and state (including its PATH block in your shell profile), and the operator
+UI. The model (`REMOVE_MODELS=1`, only `MODEL_ROOT/MODEL_ID` and the harness
+`config.json`, because `MODEL_ROOT` is shared with `make up`) and the container
+images (`REMOVE_IMAGES=1`) are kept unless requested. Node.js under `~/.nvm`
+and the lines nvm added to your shell profile are always kept.
 
 ---
 

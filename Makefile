@@ -12,6 +12,8 @@ QSR_IMAGE ?= $(REGISTRY_URL)qsr-agent:$(TAG)
 WEATHER_IMAGE ?= $(REGISTRY_URL)qsr-weather:$(TAG)
 REGISTRY_LOWER := $(shell echo $(REGISTRY) | tr A-Z a-z)
 HERMES_INSTALL_COMMIT ?=
+HERMES_INSTALL_SHA256 ?=
+HERMES_INSTALL_URL ?=
 HOST_UID ?= $(shell id -u)
 HOST_GID ?= $(shell id -g)
 WEATHER_PORT ?= 8090
@@ -20,7 +22,7 @@ RENDER_GID ?= $(shell if [ -n "$(RENDER_DEVICE)" ]; then stat -c '%g' "$(RENDER_
 TAG ?= latest
 
 export MODEL_ROOT MODEL_ID OVMS_PORT QSR_UI_PORT QSR_UI_HOST
-export HERMES_INSTALL_COMMIT QSR_IMAGE WEATHER_IMAGE TAG
+export HERMES_INSTALL_COMMIT HERMES_INSTALL_SHA256 HERMES_INSTALL_URL QSR_IMAGE WEATHER_IMAGE TAG
 export HOST_UID HOST_GID RENDER_GID
 export WEATHER_PORT
 export TAG
@@ -43,6 +45,7 @@ check:
 	@test -n "$(RENDER_DEVICE)" -a -e "$(RENDER_DEVICE)" || { echo "No Intel render device found at /dev/dri/render*" >&2; exit 1; }
 	@test -n "$(MODEL_ID)" || { echo "MODEL_ID is not set; set it in .env.example" >&2; exit 1; }
 	@test -f "$(MODEL_ROOT)/$(MODEL_ID)/config.json" || { echo "Model missing: $(MODEL_ROOT)/$(MODEL_ID)/config.json. Download it first or set MODEL_ROOT/MODEL_ID." >&2; exit 1; }
+	@case "$(QSR_MODEL_BASE_URL)" in *inference-router*) case ",$(COMPOSE_PROFILES)," in *,router,*) ;; *) echo "QSR_MODEL_BASE_URL points at inference-router but COMPOSE_PROFILES does not include 'router'; set both in .env.example" >&2; exit 1 ;; esac ;; esac
 	@docker compose version >/dev/null
 
 build: init-env

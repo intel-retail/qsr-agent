@@ -35,6 +35,9 @@ See [Connect Store Services](#connect-store-services) and
 | `QSR_UI_HOST` | `0.0.0.0` | Interface the operator UI listens on. Use `127.0.0.1` for local-only access |
 | `QSR_UI_PORT` | `8600` | Operator UI port |
 | `OVMS_PORT` | `4444` | Host port for the model server API (loopback only) |
+| `OVMS_IMAGE` | `openvino/model_server:2026.2-gpu@sha256:…` | Model server image for `make up`, pinned by digest. The host install (`scripts/setup.sh`) uses the image agent-harness-install recommends unless `HARNESS_OVMS_IMAGE` is set |
+| `COMPOSE_PROFILES` | empty | Set to `router` to also run the Inference Router container in front of the model server (the host install always runs it). Set `QSR_MODEL_BASE_URL=http://inference-router:8000/v1` with it |
+| `QSR_MODEL_BASE_URL` | `http://ovms:8000/v3` | Endpoint the agent runtime sends model requests to |
 | `WEATHER_PORT` | `8090` | Host port for the weather service (loopback only) |
 | `HERMES_TIMEOUT` | `300` | Seconds to wait for one agent answer |
 | `QSR_EXTRA_NO_PROXY` | empty | Comma-separated LAN hosts the agent must reach without the proxy |
@@ -119,6 +122,31 @@ After editing `agent-config/hermes/remote-mcp.example.yaml`, run
 `make restart`. Self-signed HTTPS certificates on service endpoints are trusted
 automatically each time the agent starts. If a service regenerates its
 certificate, run `make restart`.
+
+### Remote Services on a Host Install
+
+`scripts/setup.sh` does for the host install what the container does at start:
+
+- **Proxy bypass.** The host of every reachable service is added to `NO_PROXY`
+  and `no_proxy` in `~/.hermes/.env`, together with loopback, your shell's
+  `NO_PROXY`, `QSR_EXTRA_NO_PROXY` (export it before running `setup.sh`), and
+  any entries already in that file. Hermes then reaches the service directly,
+  the same way the setup reachability check does.
+- **Self-signed HTTPS certificates.** `setup.sh` logs the SHA-256 fingerprint of
+  the certificate each reachable HTTPS service presents but does not trust it.
+  Compare the fingerprint with the service's certificate, then rerun with
+  `QSR_TRUST_REMOTE_CERTS=1 scripts/setup.sh` to trust the current certificates.
+  `setup.sh` writes them, with the system CAs, to
+  `~/.hermes/remote-mcp-ca-bundle.pem`, sets `SSL_CERT_FILE` to that file in
+  `~/.hermes/.env`, and starts the operator UI with it. This trusts whatever
+  certificate the service presents at that moment, so use it on a trusted
+  network only. An `SSL_CERT_FILE` you already set in `~/.hermes/.env` for
+  another bundle is left alone, and then you must add the service certificate
+  to that bundle yourself.
+
+The operator UI restarts when either file changes. If a service regenerates its
+certificate (some do on every restart), tools from that service fail with
+`CERTIFICATE_VERIFY_FAILED` until you rerun `QSR_TRUST_REMOTE_CERTS=1 scripts/setup.sh`.
 
 ## Send Events From Store Systems
 

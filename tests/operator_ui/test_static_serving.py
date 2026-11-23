@@ -101,6 +101,15 @@ class StaticServingTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn(b'"ok": true', body)
 
+    def test_unreachable_model_endpoint_fails_ready_and_chat_immediately(self):
+        self.app.MODEL_BASE_URL = "http://127.0.0.1:1/v1"
+        status, _, body = self.get("/ready")
+        self.assertEqual(status, 503)
+        self.assertIn(b"model unavailable", body)
+        events = list(self.app.stream_hermes("what is the queue?"))
+        self.assertEqual(events[-1]["event"], "error")
+        self.assertIn("model endpoint", events[-1]["error"])
+
     def test_missing_build_returns_actionable_503(self):
         (self.dist / "index.html").unlink()
         status, _, body = self.get("/")
