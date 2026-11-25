@@ -14,7 +14,7 @@ Agent.
 ## Step 1: Get the Code
 
 ```bash
-git clone https://github.com/intel-retail/qsr-agent.git
+git clone -b release-2026.3.0 https://github.com/intel-retail/qsr-agent.git
 cd qsr-agent
 ```
 

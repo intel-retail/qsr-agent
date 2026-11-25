@@ -18,7 +18,7 @@ Store data comes from store services on their own hosts
 ([Connect Store Services](docs/user-guide/get-started/configuration.md#connect-store-services)).
 
 ```bash
-git clone https://github.com/intel-retail/qsr-agent.git
+git clone -b release-2026.3.0 https://github.com/intel-retail/qsr-agent.git
 cd qsr-agent
 make download-models
 # Edit .env.example (make up copies it to .env) and set the store service URLs,
