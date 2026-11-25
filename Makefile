@@ -17,6 +17,7 @@ HERMES_INSTALL_URL ?=
 HOST_UID ?= $(shell id -u)
 HOST_GID ?= $(shell id -g)
 WEATHER_PORT ?= 8090
+DEPLOYER_URL ?= http://deployer:8095/mcp
 RENDER_DEVICE ?= $(firstword $(wildcard /dev/dri/renderD*))
 RENDER_GID ?= $(shell if [ -n "$(RENDER_DEVICE)" ]; then stat -c '%g' "$(RENDER_DEVICE)"; else echo 992; fi)
 TAG ?= latest
@@ -27,7 +28,7 @@ export HOST_UID HOST_GID RENDER_GID
 export WEATHER_PORT
 export TAG
 
-.PHONY: init-env check build build-ready up up-ready down restart logs status download-models download-models-ready weather learn
+.PHONY: init-env check build build-ready up up-ready down restart logs status download-models download-models-ready weather learn deployer connect-services
 
 init-env:
 	@cp .env.example .env
@@ -76,10 +77,31 @@ up-ready: check
 	@echo "QSR Operator UI: http://localhost:$(QSR_UI_PORT)"
 
 down:
-	docker compose down
+	docker compose --profile deployer down
 
 restart:
 	docker compose restart qsr-agent
+
+# Deployer: lets the operator deploy the other QSR services from chat (see services/deployer/README.md).
+# Creates its bearer token, builds and starts it, and registers it with the agent (kept across `make up`).
+deployer:
+	@test -f deployer-config/inventory.yaml || { echo "Missing deployer-config/inventory.yaml; copy deployer-config/inventory.example.yaml and edit it" >&2; exit 1; }
+	@test -s deployer-config/known_hosts || { echo "Missing deployer-config/known_hosts; pin each node: ssh-keyscan -H <host> >> deployer-config/known_hosts" >&2; exit 1; }
+	@ls deployer-config/keys/* >/dev/null 2>&1 || { echo "No SSH key in deployer-config/keys/" >&2; exit 1; }
+	@test -s deployer-config/deployer.env || { umask 077; printf 'QSR_DEPLOYER_TOKEN=%s\n' "$$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')" > deployer-config/deployer.env; echo "Created deployer-config/deployer.env"; }
+	@printf '%s\n' 'QSR_DEPLOYER_MCP_URL=$(DEPLOYER_URL)' '+COMPOSE_PROFILES=deployer' | bash scripts/set-env.sh .env.example
+	$(MAKE) --no-print-directory init-env
+	docker compose --profile deployer up -d --build deployer
+	docker compose up -d --no-deps qsr-agent
+
+# After the operator deployed services: write each deployed service's MCP URL (inventory `agent_env`)
+# into .env.example and recreate the agent so it registers them.
+connect-services:
+	@test -s deployer-config/deployer.env || { echo "Run make deployer first" >&2; exit 1; }
+	@lines=$$(docker compose --profile deployer run --rm --no-deps -T deployer agent-env) || exit 1; \
+		printf '%s\n' "$$lines" | bash scripts/set-env.sh .env.example
+	$(MAKE) --no-print-directory init-env
+	docker compose up -d --no-deps qsr-agent
 
 logs:
 	docker compose logs -f --tail=100

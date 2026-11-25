@@ -1,0 +1,94 @@
+# Deployment inventory for the QSR deployer service.
+#
+#   cp deployer-config/inventory.example.yaml deployer-config/inventory.yaml
+#
+# Everything the agent can deploy is listed here; the model only picks service names from this
+# file, it never supplies hosts, repositories or commands. inventory.yaml, known_hosts and keys/
+# are git-ignored and mounted only into the deployer container (never into the agent container).
+#
+# Requirements per node: Linux, an SSH account that logs in with the key below, git, awk, and
+# whatever the service's own start command needs (usually Docker and make; add the account to the
+# docker group).
+#
+# Host keys are pinned, not trusted on first use. Add each node and verify its fingerprint:
+#   ssh-keyscan -H 10.0.0.11 >> deployer-config/known_hosts
+#   ssh-keygen -lf deployer-config/known_hosts
+#
+# Keys: put private keys under deployer-config/keys/ (chmod 600, owned by the user that runs
+# `make deployer`). Inside the container they appear under /run/deployer/keys/.
+
+known_hosts: /run/deployer/known_hosts
+
+defaults:
+  node:
+    user: ubuntu
+    port: 22
+    ssh_key: /run/deployer/keys/id_ed25519
+  service:
+    ref: main
+    base_dir: ~/qsr-services        # checkouts go to <base_dir>/<service name> on the node
+    timeout_seconds: 3600           # per service: clone + build + start
+    # Exported for build and start on every node, e.g. behind a corporate proxy:
+    # shell_env:
+    #   http_proxy: http://proxy.example.com:911
+    #   https_proxy: http://proxy.example.com:911
+    #   no_proxy: localhost,127.0.0.1
+
+# One node per service is the intended layout; several services may share a node.
+nodes:
+  kiosk-node:
+    host: 10.0.0.11
+  accuracy-node:
+    host: 10.0.0.12
+  loss-prevention-node:
+    host: 10.0.0.13
+    user: deploy
+    ssh_key: /run/deployer/keys/loss-prevention
+
+# Services are deployed in this order. The agent itself is not listed: it is already running.
+# `agent_env` maps the agent's setting names (.env.example) to the service's MCP URLs;
+# `make connect-services` writes them there after a deployment so the agent registers the service.
+services:
+  # Confirm each repository and start command against the service's own README before first use.
+  kiosk:
+    node: kiosk-node
+    repo: https://github.com/intel-retail/voice-enabled-interactions.git
+    dir: smart-kiosk-assistant
+    ref: main
+    build: make build REGISTRY=false
+    start: make up
+    # pre: (optional) runs in the existing checkout before git updates it, e.g. to fix ownership left by containers.
+    mcp_url: http://10.0.0.11:8014/mcp        # checked over TCP after start (optional)
+    agent_env:
+      QSR_KIOSK_MCP_URL: http://10.0.0.11:8014/mcp
+    # env: values are merged into <dir>/<env_file> on the node (created from <env_file>.example).
+    env:
+      HOST_IP: 10.0.0.11
+
+  order-accuracy-take-away:
+    node: accuracy-node
+    repo: https://github.com/intel-retail/order-accuracy.git
+    dir: take-away                            # run the commands in this repository subdirectory
+    start: make up
+    mcp_url: http://10.0.0.12:8010/mcp
+    agent_env:
+      QSR_ORDER_ACCURACY_TAKE_AWAY_MCP_URL: http://10.0.0.12:8010/mcp
+
+  order-accuracy-dine-in:
+    node: accuracy-node
+    repo: https://github.com/intel-retail/order-accuracy.git
+    dir: dine-in
+    start: make up
+    mcp_url: http://10.0.0.12:8011/mcp
+    agent_env:
+      QSR_ORDER_ACCURACY_DINE_IN_MCP_URL: http://10.0.0.12:8011/mcp
+
+  loss-prevention:
+    node: loss-prevention-node
+    repo: https://github.com/intel-retail/storewide-loss-prevention.git
+    start: make up
+    mcp_url: http://10.0.0.13:9000/mcp
+    agent_env:
+      QSR_LP_MCP_URL: http://10.0.0.13:9000/mcp
+    env:
+      HF_TOKEN: hf_replace_me                 # secrets stay in this git-ignored file

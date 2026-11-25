@@ -12,3 +12,6 @@ learning/hermes
 operator-ui/frontend/node_modules
 operator-ui/dist
 .harness
+.codesight
+# Never bake the deployer's keys, inventory secrets or token into an image.
+deployer-config

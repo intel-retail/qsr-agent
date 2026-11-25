@@ -113,6 +113,14 @@ class DiscoveryTests(unittest.TestCase):
         for read in ("compare_to_baseline", "tail_events", "describe"):
             self.assertTrue(discovery.is_read({"name": read}), read)
 
+    def test_chat_only_tools_are_not_journaled(self):
+        catalog, _ = _catalog_with(FakeService(TABLE_TOOLS))
+        calls = [{"tool": "mcp__deployer__deploy_services", "arguments": {}},
+                 {"tool": "mcp__kiosk__update_kiosk_settings", "arguments": {"mode": "express"}}]
+        servers = {"deployer": {}, "kiosk": {}}
+        self.assertEqual(discovery.chat_action_calls(calls, catalog, servers, ["deployer.deploy_services"]),
+                         [{"tool": "kiosk.update_kiosk_settings", "arguments": {"mode": "express"}}])
+
     def test_discovered_service_is_learnable_without_service_code(self):
         catalog, _ = _catalog_with(FakeService(TABLE_TOOLS))
         tools = catalog_tools(catalog)
