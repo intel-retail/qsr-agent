@@ -73,7 +73,9 @@ HERMES_RESPONSE_STYLE = os.environ.get(
     "Do not estimate missing values. Answer in one short sentence unless the user explicitly asks for detail. "
     # Qwen3 (hermes3 parser) otherwise often writes memory calls as untagged JSON reply text.
     "Tool calls must always be emitted inside <tool_call></tool_call> tags, never as reply text. When the user asks "
-    "you to remember something, call the memory tool before replying, and never say it is saved unless that call succeeded.",
+    "you to remember something, call the memory tool before replying, and never say it is saved unless that call succeeded. "
+    "Never mention tool names or call syntax (such as mcp__server__tool or tool(arg=...)) in a reply, and never tell the "
+    "operator to call a tool; to follow a job, tell them to ask you about it in plain words.",
 )
 # Reject oversized requests before reading the body or invoking Hermes.
 MAX_BODY_BYTES = int(os.environ.get("QSR_MAX_BODY_BYTES", "65536"))
@@ -195,6 +197,11 @@ def _catalog():
     return getattr(AUTONOMY.event_policies.get("*"), "catalog", None)
 
 
+def _chat_only_tools() -> list[str]:
+    """Tools kept out of autonomy (e.g. deployments); chat use of them is not learned from."""
+    return [name.strip() for name in os.environ.get("QSR_AUTONOMY_DISABLED_TOOLS", "").split(",") if name.strip()]
+
+
 def _journal(build) -> None:
     """Learning capture must never break the operator flow."""
     try:
@@ -211,7 +218,7 @@ def record_chat(decision: dict, question: str, answer: str, hermes_calls: list[d
                 proposal = AUTONOMY.store.get(decision["proposal_id"])
             except KeyError:
                 proposal = None
-        calls = chat_action_calls(hermes_calls or [], _catalog(), hermes_servers()) if _catalog() else []
+        calls = chat_action_calls(hermes_calls or [], _catalog(), hermes_servers(), _chat_only_tools()) if _catalog() else []
         return chat_record(decision, question, answer, calls, proposal)
     _journal(build)
 
@@ -398,11 +405,22 @@ def _agent_env(hermes: str) -> dict:
     return env
 
 
+# Sentence-level, so no dangling "Check status with ." is left behind.
+_TOOL_REFERENCE = re.compile(r"mcp__\w+|\b(?:get_deployment_status|deploy_services|describe_deploy_plan)\b")
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+")
+
+
+def _strip_tool_references(line: str) -> str:
+    sentences = _SENTENCE_BREAK.split(line)
+    kept = [s for s in sentences if not _TOOL_REFERENCE.search(s)]
+    return " ".join(kept) if len(kept) != len(sentences) else line
+
+
 def _normalize_answer(answer: str) -> str:
     lines: list[str] = []
     previous_text: str | None = None
     for raw_line in answer.splitlines():
-        text = raw_line.strip()
+        text = _strip_tool_references(raw_line.strip())
         if not text:
             if lines and lines[-1]:
                 lines.append("")
@@ -507,20 +525,27 @@ def stream_hermes(question: str):
         yield {"event": "error", "error": "Hermes is still answering another question; try again shortly."}
         return
     try:
-        session_id = SESSIONS.get(OPERATOR_SESSION, gateway, "QSR operator chat", CHAT_IDLE_SECONDS)
-        for event in gateway.stream_chat(session_id, question, HERMES_RESPONSE_STYLE):
-            if event["event"] == "assistant.delta" and event.get("delta"):
-                parts.append(event["delta"])
-                yield {"event": "delta", "text": event["delta"]}
-            elif event["event"] == "tool.started" and event.get("tool_name"):
-                calls.append({"tool": event["tool_name"], "arguments": event.get("args") or {}})
-            elif event["event"] == "assistant.completed":
-                answer = event.get("content") or ""
-                # Context compression continues the conversation under a new session id.
-                SESSIONS.set(OPERATOR_SESSION, event.get("session_id") or session_id)
-    except GatewayError as error:
-        yield {"event": "error", "error": str(error)[:2000]}
-        return
+        for attempt in (1, 2):
+            session_id = SESSIONS.get(OPERATOR_SESSION, gateway, "QSR operator chat", CHAT_IDLE_SECONDS)
+            try:
+                for event in gateway.stream_chat(session_id, question, HERMES_RESPONSE_STYLE):
+                    if event["event"] == "assistant.delta" and event.get("delta"):
+                        parts.append(event["delta"])
+                        yield {"event": "delta", "text": event["delta"]}
+                    elif event["event"] == "tool.started" and event.get("tool_name"):
+                        calls.append({"tool": event["tool_name"], "arguments": event.get("args") or {}})
+                    elif event["event"] == "assistant.completed":
+                        answer = event.get("content") or ""
+                        # Context compression continues the conversation under a new session id.
+                        SESSIONS.set(OPERATOR_SESSION, event.get("session_id") or session_id)
+                break
+            except GatewayError as error:
+                # A turn cut off by a gateway restart leaves the session paused for good.
+                if attempt == 1 and not parts and "unknown_execution" in str(error):
+                    SESSIONS.forget(OPERATOR_SESSION)
+                    continue
+                yield {"event": "error", "error": str(error)[:2000]}
+                return
     finally:
         CHAT_LOCK.release()
     answer = _normalize_answer(answer if answer is not None else "".join(parts))

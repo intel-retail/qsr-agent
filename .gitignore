@@ -19,3 +19,9 @@ operator-ui/dist/
 operator-ui/frontend/node_modules/
 operator-ui/frontend/*.tsbuildinfo
 .harness/
+.codesight/
+# Deployer: real inventory (secrets), SSH keys, pinned host keys and the bearer token.
+deployer-config/inventory.yaml
+deployer-config/keys/
+deployer-config/known_hosts
+deployer-config/deployer.env

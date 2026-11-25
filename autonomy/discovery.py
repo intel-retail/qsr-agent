@@ -62,11 +62,12 @@ def _wire(name: str) -> str:
 
 
 def chat_action_calls(calls: list[dict[str, Any]], catalog: CapabilityCatalog,
-                      servers: dict[str, Any]) -> list[dict[str, Any]]:
+                      servers: dict[str, Any], skip: Iterable[str] = ()) -> list[dict[str, Any]]:
     """State-changing MCP calls from a Hermes chat turn (`mcp__<server>__<tool>`), named `<service>.<tool>`.
 
-    Covers every connected server, registered in the autonomy catalog or not.
+    Covers every connected server, registered in the autonomy catalog or not; `skip` names are not learnable.
     """
+    skipped = set(skip)
     found = []
     for call in calls:
         name = str(call.get("tool") or "")
@@ -77,7 +78,7 @@ def chat_action_calls(calls: list[dict[str, Any]], catalog: CapabilityCatalog,
             raw = name[len(prefix):]
             full = f"{service_prefix(server)}.{raw}"
             known = catalog.tools.get(full)
-            if not (known.read_only if known else is_read({"name": raw})):
+            if full not in skipped and not (known.read_only if known else is_read({"name": raw})):
                 found.append({"tool": full, "arguments": call.get("arguments") or {}})
             break
     return found

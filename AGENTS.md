@@ -15,6 +15,9 @@ Skills explain routing and interpretation; they are never sources of live data.
 - Load the `loss-prevention` skill for self-checkout loss scenarios (hidden
 	items, fake scans, product switching, sweethearting), lane activity, and
 	age-range mix / signage requests.
+- Load the `service-deployment` skill to deploy the store's services ("deploy all
+	services", "deploy the kiosk service") or report deployment progress. Deployment
+	is an action: never call `deploy_services` without the explicit approval the skill requires.
 - Age-range results are sampled `detections`, not headcounts: report them as
 	detections even when the question asks about people, and say they are not
 	unique visitors.

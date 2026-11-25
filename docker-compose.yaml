@@ -114,6 +114,33 @@ services:
     networks:
       - qsr
 
+  # Deployer MCP service (services/deployer): lets the operator deploy the other QSR services
+  # from chat. Opt-in: `make deployer` creates its token and starts it; the inventory, SSH keys
+  # and known_hosts are mounted only here, never into qsr-agent. Not published on the host.
+  deployer:
+    profiles:
+      - deployer
+    image: ${DEPLOYER_IMAGE:-intel/qsr-deployer:${TAG}}
+    build:
+      context: ./services/deployer
+      args: *proxy-build-args
+    # Host user so 0600 SSH keys stay readable.
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    env_file:
+      - path: ./deployer-config/deployer.env
+        required: false
+    environment:
+      NO_PROXY: localhost,127.0.0.1,::1,${QSR_EXTRA_NO_PROXY:-}
+      no_proxy: localhost,127.0.0.1,::1,${QSR_EXTRA_NO_PROXY:-}
+    volumes:
+      - ./deployer-config/inventory.yaml:/run/deployer/inventory.yaml:ro
+      - ./deployer-config/known_hosts:/run/deployer/known_hosts:ro
+      - ./deployer-config/keys:/run/deployer/keys:ro
+    init: true
+    restart: unless-stopped
+    networks:
+      - qsr
+
   qsr-agent:
     image: ${QSR_IMAGE:-intel/qsr-agent:${TAG}}
     build:
@@ -133,6 +160,10 @@ services:
         required: false
       weather:
         condition: service_healthy
+    # Only the deployer bearer token (created by `make deployer`) comes from here.
+    env_file:
+      - path: ./deployer-config/deployer.env
+        required: false
     environment:
       <<: *proxy-env
       MODEL_ID: ${MODEL_ID:?Set MODEL_ID in .env.example}
@@ -163,6 +194,10 @@ services:
       QSR_KIOSK_MCP_URL: ${QSR_KIOSK_MCP_URL:-}
       # Digital Signage MCP service; empty removes the registration.
       QSR_DIGITAL_SIGNAGE_MCP_URL: ${QSR_DIGITAL_SIGNAGE_MCP_URL:-}
+      # Deployer MCP service (opt-in, see `deployer`); its token comes from deployer-config/deployer.env.
+      QSR_DEPLOYER_MCP_URL: ${QSR_DEPLOYER_MCP_URL:-}
+      # Chat-only: autonomous event handling must never see the deploy tools.
+      QSR_AUTONOMY_DISABLED_TOOLS: ${QSR_AUTONOMY_DISABLED_TOOLS:-deployer.describe_deploy_plan,deployer.deploy_services,deployer.get_deployment_status}
       # Extra event_type=service pairs for producers that omit `service` (learning journal).
       QSR_EVENT_SERVICES: ${QSR_EVENT_SERVICES:-}
       SAD_TIMEZONE: ${SAD_TIMEZONE:-Asia/Kolkata}
@@ -170,8 +205,8 @@ services:
       # ranges — remote MCP services (e.g. SAD on a 10.x host) are reached direct.
       # Python ignores CIDR entries, so LAN hosts it calls must be listed by IP
       # in QSR_EXTRA_NO_PROXY (comma-separated).
-      NO_PROXY: localhost,127.0.0.1,::1,ovms,inference-router,weather,host.docker.internal,${QSR_EXTRA_NO_PROXY:-},10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.intel.com
-      no_proxy: localhost,127.0.0.1,::1,ovms,inference-router,weather,host.docker.internal,${QSR_EXTRA_NO_PROXY:-},10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.intel.com
+      NO_PROXY: localhost,127.0.0.1,::1,ovms,inference-router,weather,deployer,host.docker.internal,${QSR_EXTRA_NO_PROXY:-},10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.intel.com
+      no_proxy: localhost,127.0.0.1,::1,ovms,inference-router,weather,deployer,host.docker.internal,${QSR_EXTRA_NO_PROXY:-},10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.intel.com
     ports:
       - "${QSR_UI_HOST:-0.0.0.0}:${QSR_UI_PORT:-8600}:8600"
     volumes:

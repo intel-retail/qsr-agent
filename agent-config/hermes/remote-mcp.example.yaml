@@ -106,6 +106,18 @@ mcp_servers:
     connect_timeout: 15
     timeout: 60
 
+  # Deployer (services/deployer): deploys the other services from chat. `make deployer` sets
+  # QSR_DEPLOYER_MCP_URL and creates the bearer token (deployer-config/deployer.env). Its tools
+  # are excluded from autonomous event handling (QSR_AUTONOMY_DISABLED_TOOLS in docker-compose.yaml).
+  deployer:
+    url: ${QSR_DEPLOYER_MCP_URL}
+    transport: streamable-http
+    enabled: true
+    connect_timeout: 15
+    timeout: 120
+    headers:
+      Authorization: Bearer ${QSR_DEPLOYER_TOKEN}
+
   # Template — copy for a remote, authenticated service on another host:
   # your-service:
   #   url: https://your-service.example.internal/mcp
