@@ -2,10 +2,10 @@
 
 <!--hide_directive
 <div class="component_card_widget">
-  <a class="icon_github" href="https://github.com/intel-retail/qsr-agent/tree/main/">
+  <a class="icon_github" href="https://github.com/intel-retail/qsr-agent/tree/release-2026.3.0/">
      GitHub
   </a>
-  <a class="icon_document" href="https://github.com/intel-retail/qsr-agent/blob/main/README.md">
+  <a class="icon_document" href="https://github.com/intel-retail/qsr-agent/blob/release-2026.3.0/README.md">
      Readme
   </a>
 </div>
@@ -69,10 +69,10 @@ store data, conversations, and decisions never leave the premises.
 
 For details of the supported use cases, see these pages:
 
-- [Digital Signage](https://docs.openedgeplatform.intel.com/dev/edge-ai-suites/ai-suite-retail/digital-signage/index.html)
-- [Loss Prevention](https://docs.openedgeplatform.intel.com/dev/edge-ai-suites/ai-suite-retail/loss-prevention/index.html)
-- [Order Accuracy](https://docs.openedgeplatform.intel.com/dev/edge-ai-suites/ai-suite-retail/order-accuracy/index.html)
-- [Smart Kiosk Assistant](https://docs.openedgeplatform.intel.com/dev/edge-ai-suites/ai-suite-retail/voice-enabled-interactions/smart-kiosk-assistant/index.html)
+- [Digital Signage](https://docs.openedgeplatform.intel.com/2026.3/edge-ai-suites/ai-suite-retail/digital-signage/index.html)
+- [Loss Prevention](https://docs.openedgeplatform.intel.com/2026.3/edge-ai-suites/ai-suite-retail/loss-prevention/index.html)
+- [Order Accuracy](https://docs.openedgeplatform.intel.com/2026.3/edge-ai-suites/ai-suite-retail/order-accuracy/index.html)
+- [Smart Kiosk Assistant](https://docs.openedgeplatform.intel.com/2026.3/edge-ai-suites/ai-suite-retail/voice-enabled-interactions/smart-kiosk-assistant/index.html)
 
 <!--hide_directive
 :::{toctree}
